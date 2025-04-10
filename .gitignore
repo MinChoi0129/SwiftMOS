@@ -1,0 +1,7 @@
+**__pycache__
+experiments/
+object_bank
+os/
+**.nfs*
+deep_point/build
+deep_point/deep_point.egg-info
