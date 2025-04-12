@@ -31,7 +31,7 @@ def get_config():
     class DatasetParam:
         class Train:
             data_src = "data_TripleMOS"
-            num_workers = 4
+            num_workers = 2
             frame_point_num = 160000
             SeqDir = General.SeqDir
             Voxel = General.Voxel
