@@ -171,36 +171,40 @@ def Quantize(pcds, range_x, range_y, range_z, size):
 
 
 def PolarQuantize(pcds_xyzi, range_r, range_theta, range_z, size):
-    x = pcds_xyzi[:, 0]
-    y = pcds_xyzi[:, 1]
-    z = pcds_xyzi[:, 2]
+    """
+    Polar Quantization with float-type output
+    pcds_xyzi : (N, 4)
+    range_r : (r_min, r_max)
+    range_theta : (theta_min_degree, theta_max_degree)
+    range_z : (z_min, z_max)
+    size : (r_size, theta_size, z_size)
+    """
 
+    x = pcds_xyzi[:, 0].copy()
+    y = pcds_xyzi[:, 1].copy()
+    z = pcds_xyzi[:, 2].copy()
+
+    # r
     r = np.sqrt(x**2 + y**2)
-    r_min, r_max = range_r
-    r = np.clip(r, r_min, r_max)
-    num_bins_r = size[0]
-    dr = (r_max - r_min) / num_bins_r
-    r_quan = (r - r_min) / dr
-    r_quan = np.floor(r_quan).astype(np.float32)
+    r = np.clip(r, *range_r)
+    dr = (range_r[1] - range_r[0]) / size[0]
+    r_quan = (r - range_r[0]) / dr
 
-    theta_min, theta_max = range_theta
-    theta_range_radian = (theta_min * np.pi / 180.0, theta_max * np.pi / 180.0)
-    num_bins_theta = size[1]
-    dtheta = (theta_range_radian[1] - theta_range_radian[0]) / num_bins_theta
+    # theta (degree -> radian)
+    theta = np.arctan2(y, x)  # (-pi, pi)
+    theta = theta % (2 * np.pi)  # (0, 2pi)
+    theta_min, theta_max = np.deg2rad(range_theta)
+    theta = np.clip(theta, theta_min, theta_max)
+    dtheta = (theta_max - theta_min) / size[1]
+    theta_quan = (theta - theta_min) / dtheta
 
-    theta = theta_range_radian[1] - np.arctan2(x, y)
-    theta_quan = theta / dtheta
-    theta_quan = np.floor(theta_quan).astype(np.float32)
+    # z
+    z = np.clip(z, *range_z)
+    dz = (range_z[1] - range_z[0]) / size[2]
+    z_quan = (z - range_z[0]) / dz
 
-    # z 양자화
-    z_min, z_max = range_z
-    z = np.clip(z, z_min, z_max)
-    num_bins_z = size[2]
-    dz = (z_max - z_min) / num_bins_z
-    z_quan = (z - z_min) / dz
-    z_quan = np.floor(z_quan).astype(np.float32)
-
-    return np.stack([r_quan, theta_quan, z_quan], axis=-1)  # (N, 3)
+    pcds_quan = np.stack((r_quan, theta_quan, z_quan), axis=-1)
+    return pcds_quan  # (N, 3) float quantized coords
 
 
 def SphereQuantize(pcds, phi_range, theta_range, size):

@@ -58,8 +58,8 @@ def train(epoch, end_epoch, args, model, train_loader, optimizer, scheduler, log
     else:
         pbar = enumerate(train_loader)
 
-    for i, (pcds_xyzi, pcds_coord, pcds_sphere_coord, pcds_polar_coord, pcds_target, _) in pbar:
-        loss = model(pcds_xyzi, pcds_coord, pcds_sphere_coord, pcds_polar_coord, pcds_target)
+    for i, (pcds_xyzi, pcds_coord, pcds_polar_coord, pcds_target, pcds_bev_target, _) in pbar:
+        loss = model(pcds_xyzi, pcds_coord, pcds_polar_coord, pcds_target, pcds_bev_target)
 
         optimizer.zero_grad()
         loss.backward()

@@ -1,0 +1,9 @@
+tqdm
+pyyaml==5.4.1
+scipy
+opencv-python
+tensorboardX
+pytz
+packaging
+numpy==1.22.0
+scikit-learn

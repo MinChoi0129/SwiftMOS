@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 
 class Polar2Cart(nn.Module):
-    def __init__(self, polar_size, cart_size, center_drop_grid_size=3.0, max_batch=4, mode="in"):
+    def __init__(self, polar_size, cart_size, center_drop_grid_size=3.0, max_batch=8, mode="in"):
         super(Polar2Cart, self).__init__()
         if mode == "in":
             yy_org, xx_org = torch.meshgrid(torch.arange(cart_size[0]), torch.arange(cart_size[1]))
@@ -60,7 +60,7 @@ class Polar2Cart(nn.Module):
 
 
 class Cart2Polar(nn.Module):
-    def __init__(self, polar_size, cart_size, center_drop_grid_size=3.0, max_batch=4, mode="in"):
+    def __init__(self, polar_size, cart_size, center_drop_grid_size=3.0, max_batch=8, mode="in"):
         super(Cart2Polar, self).__init__()
         if mode == "in":
             yy, xx = torch.meshgrid(torch.arange(polar_size[0]), torch.arange(polar_size[1]))

@@ -4,6 +4,8 @@ import torch.nn.functional as F
 
 import pdb
 
+from utils.pretty_print import shprint
+
 act_layer = nn.ReLU(inplace=True)
 
 
@@ -17,6 +19,7 @@ def conv3x3(in_planes, out_planes, stride=1, dilation=1, bias=False):
 class DownSample2D(nn.Module):
     def __init__(self, in_planes, out_planes, stride=1):
         super(DownSample2D, self).__init__()
+        # self.in_planes, self.out_planes = in_planes, out_planes
         self.conv_branch = nn.Sequential(
             conv3x3(in_planes, out_planes, stride=stride, dilation=1), nn.BatchNorm2d(out_planes)
         )

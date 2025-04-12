@@ -61,9 +61,9 @@ def val(epoch, model, val_loader, category_list, save_path, rank=0, save_label=T
         for i, (
             pcds_xyzi,
             pcds_coord,
-            pcds_sphere_coord,
             pcds_polar_coord,
             pcds_target,
+            pcds_bev_target,
             valid_mask_list,
             pad_length_list,
             meta_list_raw,
@@ -72,7 +72,6 @@ def val(epoch, model, val_loader, category_list, save_path, rank=0, save_label=T
             pred_cls = model.infer(
                 pcds_xyzi.squeeze(0).cuda(),
                 pcds_coord.squeeze(0).cuda(),
-                pcds_sphere_coord.squeeze(0).cuda(),
                 pcds_polar_coord.squeeze(0).cuda(),
             )
             #######################################################################################################
@@ -96,7 +95,8 @@ def val(epoch, model, val_loader, category_list, save_path, rank=0, save_label=T
                 seq_id, frame_id = meta_list_raw[0][-2][0], meta_list_raw[0][-1][0]
 
                 prediction_folder_path = os.path.join(
-                    "/home/work/TripleMOS/experiments/config_TripleMOS",
+                    save_path,
+                    "config_TripleMOS",
                     "results",
                     "sequences",
                     seq_id,

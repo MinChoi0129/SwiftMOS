@@ -46,9 +46,9 @@ def main(args, config):
     (
         pcds_xyzi,
         pcds_coord,
-        pcds_sphere_coord,
         pcds_polar_coord,
         pcds_target,
+        pcds_bev_target,
         valid_mask_list,
         pad_length_list,
         meta_list_raw,
@@ -56,7 +56,6 @@ def main(args, config):
 
     pcds_xyzi = pcds_xyzi[0, [0]].contiguous().cuda()
     pcds_coord = pcds_coord[0, [0]].contiguous().cuda()
-    pcds_sphere_coord = pcds_sphere_coord[0, [0]].contiguous().cuda()
     pcds_polar_coord = pcds_polar_coord[0, [0]].contiguous().cuda()
     # pdb.set_trace()
 
@@ -64,7 +63,7 @@ def main(args, config):
     with torch.no_grad():
         for i in tqdm.tqdm(range(1000)):
             start = time.time()
-            pred_cls = model.infer(pcds_xyzi, pcds_coord, pcds_sphere_coord, pcds_polar_coord)
+            pred_cls = model.infer(pcds_xyzi, pcds_coord, pcds_polar_coord)
             torch.cuda.synchronize()
             end = time.time()
             time_cost.append(end - start)

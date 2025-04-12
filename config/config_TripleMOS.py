@@ -2,10 +2,10 @@ def get_config():
     class General:
         log_frequency = 100
         name = __name__.rsplit("/")[-1].rsplit(".")[-1]
-        batch_size_per_gpu = 4
+        batch_size_per_gpu = 5
         fp16 = False
 
-        SeqDir = "/home/ssd_4tb/minjae/KITTI/dataset/sequences"
+        SeqDir = "/home/workspace/KITTI/dataset/sequences"
         category_list = ["static", "moving"]
 
         loss_mode = "ohem"
@@ -31,7 +31,7 @@ def get_config():
     class DatasetParam:
         class Train:
             data_src = "data_TripleMOS"
-            num_workers = 6
+            num_workers = 4
             frame_point_num = 160000
             SeqDir = General.SeqDir
             Voxel = General.Voxel
@@ -39,7 +39,7 @@ def get_config():
 
             class CopyPasteAug:
                 is_use = True
-                ObjBackDir = "/home/ssd_4tb/minjae/KITTI/object_bank_semkitti"
+                ObjBackDir = "/home/workspace/KITTI/object_bank_semkitti"
                 paste_max_obj_num = 20
 
             class AugParam:
@@ -51,7 +51,7 @@ def get_config():
 
         class Val:
             data_src = "data_TripleMOS"
-            num_workers = 6
+            num_workers = 4
             frame_point_num = 160000
             SeqDir = General.SeqDir
             Voxel = General.Voxel
@@ -64,7 +64,7 @@ def get_config():
         class_num = len(category_list) + 1
         loss_mode = General.loss_mode
         seq_num = General.K + 1
-        fusion_mode = 'CatFusion'
+        fusion_mode = "CatFusion"
         point_feat_out_channels = 64
 
         class BEVParam:
@@ -85,7 +85,7 @@ def get_config():
     class OptimizeParam:
         class optimizer:
             type = "sgd"
-            base_lr = 0.002
+            base_lr = 0.02
             momentum = 0.9
             nesterov = True
             wd = 1e-3
@@ -96,7 +96,7 @@ def get_config():
             end_epoch = 100
             pct_start = 0.01
             final_lr = 1e-6
-            step = 5
-            decay_factor = 0.5
+            step = 2
+            decay_factor = 0.1
 
     return General, DatasetParam, ModelParam, OptimizeParam
