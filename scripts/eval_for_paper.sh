@@ -1,11 +1,12 @@
 #!/bin/bash
 
-DatasetPath=/home/ssd_4tb/minjae/KITTI/dataset
-PredictionsPath=/home/work/SMVF/experiments/config_TripleMOS/results
-DataConfig=/home/work/SMVF/datasets/semantic-kitti-mos.yaml
+DatasetPath=/home/workspace/KITTI/dataset
 
-python /home/work/semantic-kitti-api/evaluate_mos.py \
+PredictionsPath=experiments/config_TripleMOS/results
+DataConfig=datasets/semantic-kitti-mos.yaml
+
+python semantic-kitti-api/evaluate_mos.py \
                                 -d $DatasetPath \
                                 -p $PredictionsPath \
-                                -dc $DataConfig
-                                -s valid \
+                                -dc $DataConfig \
+                                -s valid 

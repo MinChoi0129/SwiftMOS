@@ -1,4 +1,3 @@
-import traceback
 import torch
 
 import PIL.Image as Im
@@ -71,8 +70,8 @@ class DataloadTrain(Dataset):
 
         seq_num = config.seq_num
         # add training data
-        self.seq_split = [str(i).rjust(2, "0") for i in self.task_cfg["split"]["train"]]
-        for seq_id in self.seq_split:
+        seq_split = [str(i).rjust(2, "0") for i in self.task_cfg["split"]["train"]]
+        for seq_id in seq_split:
             fpath = os.path.join(config.SeqDir, seq_id)
             fpath_pcd = os.path.join(fpath, "velodyne")
             fpath_label = os.path.join(fpath, "labels")
@@ -126,48 +125,6 @@ class DataloadTrain(Dataset):
                         meta_list.append((fname_pcd, fname_label, pose_diff, seq_id, file_id))
 
                 self.flist.append((meta_list, meta_list_raw))
-
-        print("Before Training Samples: ", len(self.flist))
-        self.remove_few_static_frames()
-        print("After Training Samples: ", len(self.flist))
-
-    def remove_few_static_frames(self):
-        pass
-        # remove_mapping_path = os.path.join(os.path.dirname(__file__), "../config/train_split_dynamic_pointnumber.txt")
-        # with open(remove_mapping_path) as fd:
-        #     lines = fd.readlines()
-        #     lines = [line.strip() for line in lines]
-
-        # pending_dict = {}
-        # for line in lines:
-        #     if line != "":
-        #         seq, fid, _ = line.split()
-        #         if seq in self.seq_split:
-        #             if seq in pending_dict.keys():
-        #                 if fid in pending_dict[seq]:
-        #                     raise ValueError(f"!!!! Duplicate {fid} in seq {seq} in .txt file")
-        #                 pending_dict[seq].append(fid)
-        #             else:
-        #                 pending_dict[seq] = [fid]
-
-        # for seq in self.seq_split:
-        #     try:
-        #         # 문자열 "00", "01" 등 -> 정수 0, 1
-        #         seq_int = int(seq)
-
-        #         if seq in pending_dict.keys():
-        #             raw_len = len(self.flist[seq_int])  # 11
-        #             scan_files = self.flist[seq_int][0]  # meta_list
-
-        #             useful_scan_index = np.array(pending_dict[seq]).astype("int")
-        #             scan_files = [scan_files[i] for i in useful_scan_index]
-        #             self.flist[seq_int] = scan_files  # 업데이트
-
-        #             new_len = len(scan_files)
-        #             print(f"Seq {seq} drop {raw_len - new_len}: {raw_len} -> {new_len}")
-        #     except Exception as e:
-        #         traceback.print_exc()
-        #         raise Exception("Stop")
 
     def form_batch(self, pcds_total):
         # 1) augment

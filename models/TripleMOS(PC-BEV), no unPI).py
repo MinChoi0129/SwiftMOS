@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from networks import backbone, bird_view, range_view
-from networks.backbone import BilinearSample, CatFusion, get_module
+from networks.backbone import CatFusion, get_module
 import deep_point
 
 from utils.criterion import CE_OHEM
@@ -90,22 +90,17 @@ class AttNet(nn.Module):
         bev_context_layer = copy.deepcopy(self.pModel.BEVParam.context_layers)
         bev_layers = copy.deepcopy(self.pModel.BEVParam.layers)
         bev_base_block = self.pModel.BEVParam.base_block
+        bev_grid2point = self.pModel.BEVParam.bev_grid2point
         fusion_mode = self.pModel.fusion_mode
         point_feat_channels = bev_context_layer[0]
         bev_context_layer[0] = self.pModel.seq_num * bev_context_layer[0]
 
         # network
         self.point_pre = backbone.PointNetStacker(7, point_feat_channels, pre_bn=True, stack_num=2)
-        self.pc_bev = bird_view.BEVNet(bev_base_block, bev_context_layer, bev_layers, self.pModel.Voxel, use_att=True)
+        self.multi_bev_net = bird_view.BEVNet(bev_base_block, bev_context_layer, bev_layers, use_att=True)
+        self.bev_grid2point = get_module(bev_grid2point, in_dim=self.multi_bev_net.out_channels)
 
-        self.cartBEV_2_point_05 = BilinearSample(
-            in_dim=self.pc_bev.out_channels,
-            scale_rate=(0.5, 0.5),
-            bev_type="cart",
-            bev_range={"x": self.pModel.Voxel.cart_bev_range_x, "y": self.pModel.Voxel.cart_bev_range_y},
-        )
-
-        point_fusion_channels = (point_feat_channels, self.pc_bev.out_channels, 64)
+        point_fusion_channels = (point_feat_channels, self.multi_bev_net.out_channels, 64)
         self.point_post = eval("backbone.{}".format(fusion_mode))(
             in_channel_list=point_fusion_channels, out_channel=self.pModel.point_feat_out_channels
         )
@@ -114,64 +109,41 @@ class AttNet(nn.Module):
 
     def stage_forward(
         self,
-        pcds_xyzi,  # BS, 3, 7, 160000, 1
+        point_feat,  # BS, 3, 7, 160000, 1
         coord_cart,  # BS, 3, 160000, 3, 1
         coord_polar,  # BS, 3, 160000, 3, 1
-        is_training,
     ):
-        BS, T, C, N, _ = pcds_xyzi.shape  # BS, 3, 7, 160000, 1
+        BS, T, C, N, _ = point_feat.shape  # BS, 3, 7, 160000, 1
 
-        """PointNet 기반 간단 처리"""
-        point_feat_pre = self.point_pre(pcds_xyzi.view(BS * T, C, N, 1))  # BSx3, 64, 160000, 1
-        point_feat_curr = point_feat_pre.view(BS, T, -1, N, 1)[:, 0].contiguous()
+        # PointNet 기반 간단 처리
+        point_feat_pre = self.point_pre(point_feat.view(BS * T, C, N, 1))  # BSx3, 64, 160000, 1
+        pcds_coord_current = coord_cart[:, 0, :, :2].contiguous()  # BS, 160000, 2, 1
 
-        """입력 생성"""
-        cart_coord_t_0 = coord_cart[:, 0, :, :2].contiguous()  # BS, 160000, 2, 1
-        cart_coord_t_1 = coord_cart[:, 1, :, :2].contiguous()  # BS, 160000, 2, 1
-        cart_coord_t_2 = coord_cart[:, 2, :, :2].contiguous()  # BS, 160000, 2, 1
+        # 입력 생성
+        coords = [coord_cart, coord_polar]
+        shape_scalars = [BS, T, C, N]
+        cart_input, polar_input = self.generate_pc_inputs(point_feat_pre, coords, shape_scalars)
 
-        polar_coord_t_0 = coord_polar[:, 0, :, :2].contiguous()  # BS, 160000, 2, 1
-        polar_coord_t_1 = coord_polar[:, 1, :, :2].contiguous()  # BS, 160000, 2, 1
-        polar_coord_t_2 = coord_polar[:, 2, :, :2].contiguous()  # BS, 160000, 2, 1
+        # 모델 입력
+        # [BS, 64, 256, 256], [BS, 64, 128, 128], [BS, 3, 256, 256], [BS, 3, 256, 256], [BS, 3, 256, 256]
+        bev_feat_2d, res_feat, res_0, res_1, res_2 = self.multi_bev_net(cart_input, polar_input)
+        bev_feat_3d = self.bev_grid2point(bev_feat_2d, pcds_coord_current)
 
-        cart_input = VoxelMaxPool(  # BSx3, 64, 512, 512 (VoxelMaxPool) --> BS, 192, 512, 512 (View)
-            pcds_feat=point_feat_pre,
-            pcds_ind=coord_cart.view(BS * T, N, 3, 1)[:, :, :2],  # BSx3, 160000, 2, 1
-            output_size=self.cart_bev_shape[:2],  # (512, 512)
-            scale_rate=(1.0, 1.0),
-        ).view(BS, -1, self.cart_bev_shape[0], self.cart_bev_shape[1])
+        # 3차원 MLP
+        point_feat_current = point_feat_pre.view(BS, T, -1, N, 1)[:, 0].contiguous()
+        fused_point_feat = self.point_post(
+            point_feat_current,
+            bev_feat_3d,
+            self.bev_grid2point(res_feat, pcds_coord_current),
+        )
 
-        """모델 입력"""
-        if is_training:
-            bev_feat_2d, point_feat_1, res_0, res_1, res_2, history = self.pc_bev(
-                cart_input, cart_coord_t_2, polar_coord_t_2, None
-            )
-
-            bev_feat_2d, point_feat_1, res_0, res_1, res_2, history = self.pc_bev(
-                cart_input, cart_coord_t_1, polar_coord_t_1, history
-            )
-
-            # [BS, 64, 256, 256], [BS, 64, 160000, 1], [BS, 3, 256, 256], [BS, 3, 256, 256], [BS, 3, 256, 256]
-            bev_feat_2d, point_feat_1, res_0, res_1, res_2, history = self.pc_bev(
-                cart_input, cart_coord_t_0, polar_coord_t_0, history
-            )
-        else:
-            # [BS, 64, 256, 256], [BS, 64, 160000, 1], [BS, 3, 256, 256], [BS, 3, 256, 256], [BS, 3, 256, 256]
-            bev_feat_2d, point_feat_1, res_0, res_1, res_2, history = self.pc_bev(
-                cart_input, cart_coord_t_0, polar_coord_t_0, None
-            )
-
-        bev_feat_3d = self.cartBEV_2_point_05(bev_feat_2d, cart_coord_t_0)
-
-        """융합 및 예측"""
-        fused_point_feat = self.point_post(point_feat_curr, bev_feat_3d, point_feat_1)
         pred_cls = self.pred_layer(fused_point_feat).float()
 
         return pred_cls, res_0, res_1, res_2
 
     def forward(self, pcds_xyzi, pcds_coord, pcds_polar_coord, pcds_target, pcds_bev_target):
-        """Forward"""
-        pred_cls, res_0, res_1, res_2 = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord, is_training=True)
+        # BS, 3, 160000, 1 / pcds_target(label)은 BS, 160000, 1
+        pred_cls, res_0, res_1, res_2 = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord)
 
         # shape 변환
         bs, time_num, _, _ = pred_cls.shape
@@ -187,9 +159,8 @@ class AttNet(nn.Module):
         loss4 = self.criterion_seg_cate(res_2, pcds_bev_target) + 3 * lovasz_softmax(res_2, pcds_bev_target, ignore=0)
 
         loss = loss1 + (loss2 + loss3 + loss4) / 3
-
         return loss
 
     def infer(self, pcds_xyzi, pcds_coord, pcds_polar_coord):
-        pred_cls = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord, is_training=False)[0]
+        pred_cls = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord)[0]
         return pred_cls

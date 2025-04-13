@@ -2,7 +2,8 @@ tqdm
 pyyaml==5.4.1
 scipy
 opencv-python
-tensorboardX
+tensorboard
+setuptools==59.5.0
 pytz
 packaging
 numpy==1.22.0

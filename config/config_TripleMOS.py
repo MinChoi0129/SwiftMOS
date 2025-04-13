@@ -2,7 +2,7 @@ def get_config():
     class General:
         log_frequency = 100
         name = __name__.rsplit("/")[-1].rsplit(".")[-1]
-        batch_size_per_gpu = 5
+        batch_size_per_gpu = 3
         fp16 = False
 
         SeqDir = "/home/workspace/KITTI/dataset/sequences"

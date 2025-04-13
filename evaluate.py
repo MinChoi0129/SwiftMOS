@@ -51,12 +51,12 @@ def mapping(label, mapdict):
     return lut[label]
 
 
-def val(epoch, model, val_loader, category_list, save_path, rank=0, save_label=True):
+def val(epoch, model, val_loader, category_list, save_path, writer, rank=0, save_label=True):
     criterion_cate = MultiClassMetric(category_list)
     model.eval()
 
     # 결과 로그를 기록할 파일
-    f = open(os.path.join(save_path, "record_{}.txt".format(rank)), "a")
+    f = open(os.path.join(save_path, "val_log.txt"), "a")
     with torch.no_grad():
         for i, (
             pcds_xyzi,
@@ -115,6 +115,8 @@ def val(epoch, model, val_loader, category_list, save_path, rank=0, save_label=T
         string = "Epoch {}".format(epoch)
         for key in metric_cate:
             string += "; {}: {:.4f}".format(key, metric_cate[key])
+            if writer:
+                writer.add_scalar(f"Eval/{key}", metric_cate[key], epoch)
         print(string)
         f.write(string + "\n")
         f.close()
@@ -153,7 +155,7 @@ def main(args, config):
         if (epoch + rank) < (args.end_epoch + 1):
             pretrain_model = os.path.join(model_prefix, "{}-model.pth".format(epoch + rank))
             model.load_state_dict(torch.load(pretrain_model, map_location="cpu"))
-            val(epoch + rank, model, val_loader, pGen.category_list, save_path, rank, save_label=args.save_label)
+            val(epoch + rank, model, val_loader, pGen.category_list, save_path, None, rank, save_label=args.save_label)
 
 
 if __name__ == "__main__":

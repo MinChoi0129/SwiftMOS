@@ -7,7 +7,8 @@ import torch.nn.functional as F
 import argparse
 import time
 import pdb
-
+import sys  # 추가됨
+import traceback
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
@@ -22,6 +23,10 @@ import logging
 import importlib
 from utils.logger import config_logger
 from utils import builder
+
+from torch.utils.tensorboard import SummaryWriter
+
+from utils.pretty_print import shprint
 
 
 def reduce_tensor(inp):
@@ -49,7 +54,7 @@ def load_checkpoint(filename, model, optimizer, scheduler):
     return checkpoint["epoch"]
 
 
-def train(epoch, end_epoch, args, model, train_loader, optimizer, scheduler, logger, log_frequency):
+def train(epoch, end_epoch, args, model, train_loader, optimizer, scheduler, logger, writer, log_frequency):
     rank = torch.distributed.get_rank()
     model.train()
     # rank 0인 경우 tqdm 진행바 생성, 나머지는 단순 반복
@@ -67,9 +72,7 @@ def train(epoch, end_epoch, args, model, train_loader, optimizer, scheduler, log
         scheduler.step()
 
         reduced_loss = reduce_tensor(loss)
-        # rank 0에서는 진행바 업데이트 및 주기적 로그 기록 (로그는 파일에 기록됨)
         if rank == 0:
-            # tqdm 진행바의 postfix를 업데이트: loss와 ETA가 같이 표시됩니다.
             pbar.set_postfix(loss="%.4f" % (reduced_loss.item() / torch.distributed.get_world_size()))
             if i % log_frequency == 0:
                 current_lr = optimizer.state_dict()["param_groups"][0]["lr"]
@@ -83,6 +86,15 @@ def train(epoch, end_epoch, args, model, train_loader, optimizer, scheduler, log
                 )
                 logger.info(log_str)
 
+            if i == 10:
+                global_step = epoch * len(train_loader) + i  # epoch와 iteration을 조합하여 global step 계산
+                if writer:
+                    writer.add_scalar(
+                        "Train/Loss",
+                        reduced_loss.item() / torch.distributed.get_world_size(),
+                        global_step,
+                    )
+
 
 def main(args, config):
     # config 파싱
@@ -93,7 +105,7 @@ def main(args, config):
     model_prefix = os.path.join(save_path, "checkpoint")
 
     os.system("mkdir -p {}".format(model_prefix))
-    config_logger(os.path.join(save_path, "log.txt"))
+    config_logger(os.path.join(save_path, "train_log.txt"))
     logger = logging.getLogger()
 
     device = torch.device("cuda:{}".format(args.local_rank))
@@ -101,6 +113,10 @@ def main(args, config):
     torch.distributed.init_process_group(backend="nccl", init_method="env://")
     world_size = torch.distributed.get_world_size()
     rank = torch.distributed.get_rank()
+
+    writer = None
+    if rank == 0:
+        writer = SummaryWriter(log_dir=os.path.join(save_path, "logs"))
 
     seed = rank * pDataset.Train.num_workers + 50051
     random.seed(seed)
@@ -143,52 +159,69 @@ def main(args, config):
         checkpoint_file = os.path.join(model_prefix, "{}-checkpoint.pth".format(pModel.pretrain.pretrain_epoch))
         if os.path.exists(checkpoint_file):
             start_epoch = load_checkpoint(checkpoint_file, base_net, optimizer, scheduler) + 1
-            logger.info("Checkpoint {} 불러와서 {} epoch 부터 재개합니다.".format(checkpoint_file, start_epoch))
+            if rank == 0:
+                logger.info("Checkpoint {} 불러와서 {} epoch 부터 재개합니다.".format(checkpoint_file, start_epoch))
         else:
-            logger.info("Checkpoint {}를 찾을 수 없습니다. 파라미터 처음부터 학습합니다.".format(checkpoint_file))
+            if rank == 0:
+                logger.info("Checkpoint {}를 찾을 수 없습니다. 파라미터 처음부터 학습합니다.".format(checkpoint_file))
             start_epoch = pOpt.schedule.begin_epoch
     else:
-        logger.info("Checkpoint를 지정하지 않아 처음부터 학습합니다.")
+        if rank == 0:
+            logger.info("Checkpoint를 지정하지 않아 처음부터 학습합니다.")
         start_epoch = pOpt.schedule.begin_epoch
 
-    #######################################################################################################
-    for epoch in range(start_epoch, pOpt.schedule.end_epoch):
-        model.train()
-        train_sampler.set_epoch(epoch)
+    try:
+        for epoch in range(start_epoch, pOpt.schedule.end_epoch):
+            model.train()
+            train_sampler.set_epoch(epoch)
 
-        train(
-            epoch,
-            pOpt.schedule.end_epoch,
-            args,
-            model,
-            train_loader,
-            optimizer,
-            scheduler,
-            logger,
-            pGen.log_frequency,
-        )
+            train(
+                epoch,
+                pOpt.schedule.end_epoch,
+                args,
+                model,
+                train_loader,
+                optimizer,
+                scheduler,
+                logger,
+                writer,
+                pGen.log_frequency,
+            )
 
+            if rank == 0:
+                # 체크포인트 저장: epoch, 모델, optimizer, scheduler 상태 포함
+                checkpoint = {
+                    "epoch": epoch,
+                    "model_state_dict": model.module.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
+                }
+                checkpoint_path = os.path.join(model_prefix, "{}-checkpoint.pth".format(epoch))
+                save_checkpoint(checkpoint, checkpoint_path)
+                logger.info("Epoch {} 체크포인트 저장: {}".format(epoch, checkpoint_path))
+
+                if epoch >= args.start_validating_epoch:
+                    # 평가 수행
+                    v_model = eval(pModel.prefix)(pModel)
+                    v_model.cuda()
+                    v_model.eval()
+                    eval_checkpoint = torch.load(checkpoint_path, map_location="cpu")
+                    v_model.load_state_dict(eval_checkpoint["model_state_dict"])
+                    logger.info("{} 체크포인트를 이용하여 평가합니다.".format(checkpoint_path))
+                    val(epoch, v_model, val_loader, pGen.category_list, save_path, writer, rank, save_label=False)
+    except KeyboardInterrupt:
         if rank == 0:
-            # 체크포인트 저장: epoch, 모델, optimizer, scheduler 상태 포함
-            checkpoint = {
-                "epoch": epoch,
-                "model_state_dict": model.module.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": scheduler.state_dict(),
-            }
-            checkpoint_path = os.path.join(model_prefix, "{}-checkpoint.pth".format(epoch))
-            save_checkpoint(checkpoint, checkpoint_path)
-            logger.info("Epoch {} 체크포인트 저장: {}".format(epoch, checkpoint_path))
-
-            # 평가 수행
-            v_model = eval(pModel.prefix)(pModel)
-            v_model.cuda()
-            v_model.eval()
-            # 평가 시 체크포인트로부터 모델 가중치 로드
-            eval_checkpoint = torch.load(checkpoint_path, map_location="cpu")
-            v_model.load_state_dict(eval_checkpoint["model_state_dict"])
-            logger.info("{} 체크포인트를 이용하여 평가합니다.".format(checkpoint_path))
-            val(epoch, v_model, val_loader, pGen.category_list, save_path, rank, save_label=False)
+            logger.info("KeyboardInterrupt 감지됨. 안전하게 종료합니다...")
+    except Exception as e:
+        if rank == 0:
+            traceback.print_exc()  # 전체 Traceback 출력
+    finally:
+        # writer 종료 및 프로세스 그룹 해제
+        if writer is not None:
+            writer.close()
+        torch.distributed.destroy_process_group()
+        if rank == 0:
+            logger.info("리소스(CPU, GPU, RAM) 모두 해제되었습니다.")
 
 
 if __name__ == "__main__":
@@ -201,4 +234,10 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     config = importlib.import_module(args.config.replace(".py", "").replace("/", "."))
-    main(args, config)
+    try:
+        main(args, config)
+    except KeyboardInterrupt:
+        # 메인에서도 KeyboardInterrupt를 catch하여 안전 종료
+        print("Graceful Shutdown")
+    finally:
+        sys.exit(0)
