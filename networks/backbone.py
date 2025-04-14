@@ -369,76 +369,26 @@ class PointAttFusion(nn.Module):
 
 
 class BilinearSample(nn.Module):
-    def __init__(self, in_dim, scale_rate, bev_type="cart", bev_range=None):
+    def __init__(self, in_dim, scale_rate):
         super(BilinearSample, self).__init__()
         self.scale_rate = scale_rate
-        self.bev_type = bev_type
-        self.bev_range = bev_range  # dict: for 'cart': {'x': (min, max), 'y': (min, max)},
-        #        for 'polar': {'theta': (min, max), 'r': (min, max)}
 
     def forward(self, grid_feat, grid_coord):
         """
         Input:
             grid_feat, (BS, C, H, W)
             grid_coord, (BS, N, 2, S)
-                - 'cart'의 경우: grid_coord[:,:,0,:]는 y, grid_coord[:,:,1,:]는 x 좌표 (원래 단위)
-                - 'polar'의 경우: grid_coord[:,:,0,:]는 theta, grid_coord[:,:,1,:]는 r (원래 단위)
         Output:
             pc_feat, (BS, C, N, S)
         """
-        if self.bev_type == "cart":
-            # Cartesian BEV: bev_range 예: {'x': (-50.0, 50.0), 'y': (-50.0, 50.0)}
-            range_x = self.bev_range["x"]
-            range_y = self.bev_range["y"]
-            # scale_rate 곱한 후, 주어진 범위로 정규화
-            grid_sample_x = (
-                2 * (grid_coord[:, :, 1] * self.scale_rate[1] - range_x[0]) / (range_x[1] - range_x[0])
-            ) - 1
-            grid_sample_y = (
-                2 * (grid_coord[:, :, 0] * self.scale_rate[0] - range_y[0]) / (range_y[1] - range_y[0])
-            ) - 1
-        elif self.bev_type == "polar":
-            # Polar BEV: bev_range 예: {'theta': (-180, 180), 'r': (2, 50)}
-            range_theta = self.bev_range["theta"]
-            range_r = self.bev_range["r"]
-            # 여기서는 grid_coord[:,:,0,:]가 theta, grid_coord[:,:,1,:]가 r로 사용됨
-            grid_sample_x = (
-                2 * (grid_coord[:, :, 1] * self.scale_rate[1] - range_r[0]) / (range_r[1] - range_r[0])
-            ) - 1
-            grid_sample_y = (
-                2 * (grid_coord[:, :, 0] * self.scale_rate[0] - range_theta[0]) / (range_theta[1] - range_theta[0])
-            ) - 1
-        else:
-            raise ValueError("bev_type must be either 'cart' or 'polar'")
+        H = grid_feat.shape[2]
+        W = grid_feat.shape[3]
+
+        grid_sample_x = (2 * grid_coord[:, :, 1] * self.scale_rate[1] / (W - 1)) - 1  # (BS, N, S)
+        grid_sample_y = (2 * grid_coord[:, :, 0] * self.scale_rate[0] / (H - 1)) - 1  # (BS, N, S)
 
         grid_sample_2 = torch.stack((grid_sample_x, grid_sample_y), dim=-1)  # (BS, N, S, 2)
         pc_feat = F.grid_sample(
             grid_feat, grid_sample_2, mode="bilinear", padding_mode="zeros", align_corners=True
         )  # (BS, C, N, S)
         return pc_feat
-
-
-# class BilinearSample(nn.Module):
-#     def __init__(self, in_dim, scale_rate):
-#         super(BilinearSample, self).__init__()
-#         self.scale_rate = scale_rate
-
-#     def forward(self, grid_feat, grid_coord):
-#         """
-#         Input:
-#             grid_feat, (BS, C, H, W)
-#             grid_coord, (BS, N, 2, S)
-#         Output:
-#             pc_feat, (BS, C, N, S)
-#         """
-#         H = grid_feat.shape[2]
-#         W = grid_feat.shape[3]
-
-#         grid_sample_x = (2 * grid_coord[:, :, 1] * self.scale_rate[1] / (W - 1)) - 1  # (BS, N, S)
-#         grid_sample_y = (2 * grid_coord[:, :, 0] * self.scale_rate[0] / (H - 1)) - 1  # (BS, N, S)
-
-#         grid_sample_2 = torch.stack((grid_sample_x, grid_sample_y), dim=-1)  # (BS, N, S, 2)
-#         pc_feat = F.grid_sample(
-#             grid_feat, grid_sample_2, mode="bilinear", padding_mode="zeros", align_corners=True
-#         )  # (BS, C, N, S)
-#         return pc_feat

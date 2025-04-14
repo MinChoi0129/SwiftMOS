@@ -86,14 +86,13 @@ def train(epoch, end_epoch, args, model, train_loader, optimizer, scheduler, log
                 )
                 logger.info(log_str)
 
-            if i == 10:
-                global_step = epoch * len(train_loader) + i  # epoch와 iteration을 조합하여 global step 계산
-                if writer:
-                    writer.add_scalar(
-                        "Train/Loss",
-                        reduced_loss.item() / torch.distributed.get_world_size(),
-                        global_step,
-                    )
+            global_step = epoch * len(train_loader) + i  # epoch와 iteration을 조합하여 global step 계산
+            if writer:
+                writer.add_scalar(
+                    "Train/Loss",
+                    reduced_loss.item() / torch.distributed.get_world_size(),
+                    global_step,
+                )
 
 
 def main(args, config):
@@ -143,7 +142,8 @@ def main(args, config):
     )
     #######################################################################################################
 
-    base_net = eval(pModel.prefix)(pModel)
+    base_net = TripleMOS.AttNet(pModel)
+
     optimizer = builder.get_optimizer(pOpt, base_net)
     per_epoch_num_iters = len(train_loader)
     scheduler = builder.get_scheduler(optimizer, pOpt, per_epoch_num_iters)
@@ -239,5 +239,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         # 메인에서도 KeyboardInterrupt를 catch하여 안전 종료
         print("Graceful Shutdown")
+        traceback.print_exc()
     finally:
         sys.exit(0)

@@ -97,7 +97,7 @@ In `config/config_TripleMOS.py`
 * The path of `Object Bank` should be filled in `ObjBackDir`(Recommend Absolute Path)
 
 In `scripts/eval_for_paper.sh`
-* Change `DatasetPath` properly to fit your environment.(Should be Absolute Path)
+* Change All `*Path` properly to fit your environment.(Should be Absolute Path)
 
 In `scripts/train_multi_gpu.sh`
 * Fill `CUDA_VISIBLE_DEVICES` and `NumGPUs` according to your computing resources.

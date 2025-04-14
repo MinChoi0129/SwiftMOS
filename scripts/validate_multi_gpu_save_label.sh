@@ -4,8 +4,8 @@ ConfigPath=config/config_TripleMOS.py
 CheckpointModelEpoch_from=11
 CheckpointModelEpoch_to=11
 
-export CUDA_VISIBLE_DEVICES=1,2
-NumGPUs=2 # should be the 'length of cuda visible devices'
+export CUDA_VISIBLE_DEVICES=1
+NumGPUs=1 # should be the 'length of cuda visible devices'
 
 python3 -m torch.distributed.launch --nproc_per_node=$NumGPUs evaluate.py \
     --config $ConfigPath \

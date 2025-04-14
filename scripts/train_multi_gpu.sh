@@ -8,5 +8,5 @@ NumGPUs=4 # should be the 'length of cuda visible devices'
 python3 -m torch.distributed.launch \
     --nproc_per_node=$NumGPUs train.py \
     --config $ConfigPath \
-    --start_validating_epoch 2
+    --start_validating_epoch 0
     # --keep_training

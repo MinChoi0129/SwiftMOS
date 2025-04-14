@@ -96,7 +96,7 @@ def get_config():
             end_epoch = 100
             pct_start = 0.01
             final_lr = 1e-6
-            step = 2
+            step = 10
             decay_factor = 0.1
 
     return General, DatasetParam, ModelParam, OptimizeParam

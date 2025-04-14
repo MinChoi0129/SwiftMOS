@@ -126,7 +126,7 @@ def main(args, config):
     # parsing cfg
     pGen, pDataset, pModel, pOpt = config.get_config()
 
-    if args.save_label and args.start_epoch == args.end_epoch:
+    if args.save_label and args.start_epoch != args.end_epoch:
         raise ValueError("라벨 저장 모드일 시 Epoch은 하나로 지정돼야합니다.")
 
     prefix = pGen.name
@@ -153,8 +153,8 @@ def main(args, config):
 
     for epoch in range(args.start_epoch, args.end_epoch + 1, world_size):
         if (epoch + rank) < (args.end_epoch + 1):
-            pretrain_model = os.path.join(model_prefix, "{}-model.pth".format(epoch + rank))
-            model.load_state_dict(torch.load(pretrain_model, map_location="cpu"))
+            pretrain_model = os.path.join(model_prefix, "{}-checkpoint.pth".format(epoch + rank))
+            model.load_state_dict(torch.load(pretrain_model, map_location="cpu")["model_state_dict"])
             val(epoch + rank, model, val_loader, pGen.category_list, save_path, None, rank, save_label=args.save_label)
 
 
@@ -164,7 +164,7 @@ if __name__ == "__main__":
     parser.add_argument("--local_rank", type=int, default=0)
     parser.add_argument("--start_epoch", type=int, default=0)
     parser.add_argument("--end_epoch", type=int, default=0)
-    parser.add_argument("--save_label", type=bool, default=False, action="store_true")
+    parser.add_argument("--save_label", default=False, action="store_true")
 
     args = parser.parse_args()
     config = importlib.import_module(args.config.replace(".py", "").replace("/", "."))

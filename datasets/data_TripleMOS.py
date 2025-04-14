@@ -25,6 +25,20 @@ def VoxelMaxPool(pcds_feat, pcds_ind, output_size, scale_rate):
     return voxel_feat
 
 
+def generate_bev_label(pcds_coord, pcds_target):
+    pcds_coord_ = torch.clone(pcds_coord[:1, :, :2, :])  # 1, 160000, 2, 1
+    pcds_target_ = torch.clone(pcds_target).unsqueeze(0).unsqueeze(0)  # 1, 1, 160000, 1
+    bev_input = VoxelMaxPool(
+        pcds_feat=pcds_target_,
+        pcds_ind=pcds_coord_,
+        output_size=(256, 256),
+        scale_rate=(1.0, 1.0),
+    )
+    bev_input = bev_input.squeeze(0).squeeze(0).unsqueeze(-1)
+
+    return bev_input
+
+
 def make_point_feat(pcds_xyzi, pcds_coord):
     # make point feat
     x = pcds_xyzi[:, 0].copy()
@@ -192,20 +206,12 @@ class DataloadTrain(Dataset):
             size=self.Voxel.polar_bev_shape,
         )
 
-        # pcds_sphere_coord = utils.SphereQuantize(
-        #     pcds_xyzi,
-        #     phi_range=(-180.0, 180.0),
-        #     theta_range=self.Voxel.rv_theta,
-        #     size=self.Voxel.rv_shape,
-        # )
-
         # make feature
         pcds_xyzi = make_point_feat(pcds_xyzi, pcds_coord)
         pcds_xyzi = torch.FloatTensor(pcds_xyzi.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
         pcds_xyzi = pcds_xyzi.permute(0, 2, 1, 3).contiguous()
 
         pcds_coord = torch.FloatTensor(pcds_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
-        # pcds_sphere_coord = torch.FloatTensor(pcds_sphere_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
         pcds_polar_coord = torch.FloatTensor(pcds_polar_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
 
         return pcds_xyzi, pcds_coord, pcds_polar_coord
@@ -235,16 +241,6 @@ class DataloadTrain(Dataset):
             pc_raw_label_list.append(sem_label)
 
         return pc_list, pc_label_list, pc_road_list, pc_raw_label_list
-
-    def generate_bev_label(self, pcds_coord, pcds_target):
-        pcds_coord_ = torch.clone(pcds_coord[:1, :, :2, :])
-        pcds_target_ = torch.clone(pcds_target).unsqueeze(0).unsqueeze(0)
-        voxel_size = np.array(self.Voxel.cart_bev_shape[:2]) / 2
-        bev_input = VoxelMaxPool(
-            pcds_feat=pcds_target_, pcds_ind=pcds_coord_, output_size=voxel_size.astype("int"), scale_rate=(0.5, 0.5)
-        )
-        bev_input = bev_input.squeeze(0).squeeze(0).unsqueeze(-1)
-        return bev_input
 
     def __getitem__(self, index):
         meta_list, meta_list_raw = self.flist[index]
@@ -282,14 +278,14 @@ class DataloadTrain(Dataset):
         pcds_target = torch.LongTensor(pc_label_list[0].astype(np.long)).unsqueeze(-1)
 
         pcds_xyzi, pcds_coord, pcds_polar_coord = self.form_batch(pc_list.copy())
-        pcds_bev_target = self.generate_bev_label(pcds_coord, pcds_target)
+        pcds_bev_target = generate_bev_label(pcds_coord, pcds_target)
 
         return (
-            pcds_xyzi,
-            pcds_coord,
-            pcds_polar_coord,
-            pcds_target,
-            pcds_bev_target,
+            pcds_xyzi,  # 3, 7, 160000, 1
+            pcds_coord,  # 3, 160000, 3, 1
+            pcds_polar_coord,  # 3, 160000, 3, 1
+            pcds_target,  # 160000, 1
+            pcds_bev_target,  # 256, 256, 1
             meta_list_raw,
         )
 
@@ -384,20 +380,12 @@ class DataloadVal(Dataset):
             size=self.Voxel.polar_bev_shape,
         )
 
-        # pcds_sphere_coord = utils.SphereQuantize(
-        #     pcds_xyzi,
-        #     phi_range=(-180.0, 180.0),
-        #     theta_range=self.Voxel.rv_theta,
-        #     size=self.Voxel.rv_shape,
-        # )
-
         # make feature
         pcds_xyzi = make_point_feat(pcds_xyzi, pcds_coord)
         pcds_xyzi = torch.FloatTensor(pcds_xyzi.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
         pcds_xyzi = pcds_xyzi.permute(0, 2, 1, 3).contiguous()
 
         pcds_coord = torch.FloatTensor(pcds_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
-        # pcds_sphere_coord = torch.FloatTensor(pcds_sphere_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
         pcds_polar_coord = torch.FloatTensor(pcds_polar_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
 
         return pcds_xyzi, pcds_coord, pcds_polar_coord
@@ -418,13 +406,11 @@ class DataloadVal(Dataset):
 
                 pcds_xyzi_list.append(pcds_xyzi)
                 pcds_coord_list.append(pcds_coord)
-                # pcds_sphere_list.append(pcds_sphere)
                 pcds_polar_list.append(pcds_polar)
 
         # stack
         pcds_xyzi = torch.stack(pcds_xyzi_list, dim=0)
         pcds_coord = torch.stack(pcds_coord_list, dim=0)
-        # pcds_sphere = torch.stack(pcds_sphere_list, dim=0)
         pcds_polar = torch.stack(pcds_polar_list, dim=0)
 
         return pcds_xyzi, pcds_coord, pcds_polar
@@ -448,16 +434,6 @@ class DataloadVal(Dataset):
             pc_label_list.append(pcds_label_use)
 
         return pc_list, pc_label_list
-
-    def generate_bev_label(self, pcds_coord, pcds_target):
-        pcds_coord_ = torch.clone(pcds_coord[:1, :, :2, :])
-        pcds_target_ = torch.clone(pcds_target).unsqueeze(0).unsqueeze(0)
-        voxel_size = np.array(self.Voxel.cart_bev_shape[:2]) / 2
-        bev_input = VoxelMaxPool(
-            pcds_feat=pcds_target_, pcds_ind=pcds_coord_, output_size=voxel_size.astype("int"), scale_rate=(1.0, 1.0)
-        )
-        bev_input = bev_input.squeeze(0).squeeze(0).unsqueeze(-1)
-        return bev_input
 
     def __getitem__(self, index):
         meta_list, meta_list_raw = self.flist[index]
@@ -490,7 +466,7 @@ class DataloadVal(Dataset):
         pcds_target = torch.LongTensor(pc_label_list[0].astype(np.long)).unsqueeze(-1)
 
         pcds_xyzi, pcds_coord, pcds_polar_coord = self.form_batch_tta(pc_list.copy())
-        pcds_bev_target = self.generate_bev_label(pcds_coord[0], pcds_target)
+        pcds_bev_target = generate_bev_label(pcds_coord[0], pcds_target)
 
         return (
             pcds_xyzi,

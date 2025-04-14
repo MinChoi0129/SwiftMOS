@@ -2,8 +2,8 @@
 
 DatasetPath=/home/workspace/KITTI/dataset
 
-PredictionsPath=experiments/config_TripleMOS/results
-DataConfig=datasets/semantic-kitti-mos.yaml
+PredictionsPath=/home/workspace/work/TripleMOS/experiments/config_TripleMOS/config_TripleMOS/results
+DataConfig=/home/workspace/work/TripleMOS/datasets/semantic-kitti-mos.yaml
 
 python semantic-kitti-api/evaluate_mos.py \
                                 -d $DatasetPath \

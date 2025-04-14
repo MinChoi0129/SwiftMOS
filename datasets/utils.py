@@ -170,7 +170,13 @@ def Quantize(pcds, range_x, range_y, range_z, size):
     return pcds_quan
 
 
-def PolarQuantize(pcds_xyzi, range_r, range_theta, range_z, size):
+def PolarQuantize(
+    pcds_xyzi,
+    range_r,  # 예: (2, 50)
+    range_theta,  # 예: (-180, 180)
+    range_z,  # 예: (-4.0, 2.0)
+    size,  # 예: (512, 512, 30)
+):
     """
     Polar Quantization with float-type output
     pcds_xyzi : (N, 4)
@@ -184,25 +190,29 @@ def PolarQuantize(pcds_xyzi, range_r, range_theta, range_z, size):
     y = pcds_xyzi[:, 1].copy()
     z = pcds_xyzi[:, 2].copy()
 
-    # r
+    # 1) r 범위 클리핑 & 정규화
     r = np.sqrt(x**2 + y**2)
     r = np.clip(r, *range_r)
     dr = (range_r[1] - range_r[0]) / size[0]
     r_quan = (r - range_r[0]) / dr
 
-    # theta (degree -> radian)
-    theta = np.arctan2(y, x)  # (-pi, pi)
-    theta = theta % (2 * np.pi)  # (0, 2pi)
-    theta_min, theta_max = np.deg2rad(range_theta)
-    theta = np.clip(theta, theta_min, theta_max)
-    dtheta = (theta_max - theta_min) / size[1]
-    theta_quan = (theta - theta_min) / dtheta
+    # 2) theta 범위 처리
+    # arctan2 결과가 이미 [-π, π] 범위를 가집니다.
+    theta = np.arctan2(y, x)  # [-π, π] 범위
+    theta_min_rad, theta_max_rad = np.deg2rad(range_theta)  # -180 ~ 180도를 radian으로 변환
 
-    # z
+    # 범위 밖 각도는 clip 처리
+    theta = np.clip(theta, theta_min_rad, theta_max_rad)
+
+    dtheta = (theta_max_rad - theta_min_rad) / size[1]
+    theta_quan = (theta - theta_min_rad) / dtheta
+
+    # 3) z 범위 클리핑 & 정규화
     z = np.clip(z, *range_z)
     dz = (range_z[1] - range_z[0]) / size[2]
     z_quan = (z - range_z[0]) / dz
 
+    # 4) 최종 스택 (r, theta, z)
     pcds_quan = np.stack((r_quan, theta_quan, z_quan), axis=-1)
     return pcds_quan  # (N, 3) float quantized coords
 
