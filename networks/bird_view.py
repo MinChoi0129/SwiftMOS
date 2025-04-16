@@ -92,11 +92,11 @@ class BEVNet(nn.Module):
         self.cartBEV_2_point_025 = backbone.BilinearSample(in_dim=4, scale_rate=(0.25, 0.25))
         self.polarBEV_2_point_025 = backbone.BilinearSample(in_dim=4, scale_rate=(0.25, 0.25))
 
-        self.conv_1 = backbone.BasicConv2d(256, 128, kernel_size=3, padding=1)
-        self.conv_2 = backbone.BasicConv2d(128, self.out_channels, kernel_size=3, padding=1)
-        self.aux_head1 = nn.Conv2d(64, nclasses, 1)
-        self.aux_head2 = nn.Conv2d(128, nclasses, 1)
-        self.aux_head3 = nn.Conv2d(64, nclasses, 1)
+        # self.conv_1 = backbone.BasicConv2d(256, 128, kernel_size=3, padding=1)
+        # self.conv_2 = backbone.BasicConv2d(128, self.out_channels, kernel_size=3, padding=1)
+        # self.aux_head1 = nn.Conv2d(64, nclasses, 1)
+        # self.aux_head2 = nn.Conv2d(128, nclasses, 1)
+        # self.aux_head3 = nn.Conv2d(64, nclasses, 1)
 
     def _make_layer(self, block, in_planes, out_planes, num_blocks, stride=1, dilation=1, use_att=True):
         layer = []
@@ -129,8 +129,8 @@ class BEVNet(nn.Module):
 
         # ResBlock 단계
         c1 = self.cart_res1(c0)  # [BS, 64, 128, 128]
-        c1_point = self.cartBEV_2_point_025(c1, c_coord)
-        c1_polar = VoxelMaxPool(c1_point, p_coord, output_size=(256, 256), scale_rate=(0.5, 0.5))
+        c1_point_out = self.cartBEV_2_point_025(c1, c_coord)
+        c1_polar = VoxelMaxPool(c1_point_out, p_coord, output_size=(256, 256), scale_rate=(0.5, 0.5))
         c1_polar = self.polar_res1(c1_polar)
         c1_point = self.polarBEV_2_point_025(c1_polar, p_coord)
         c1_cart = VoxelMaxPool(
@@ -143,23 +143,25 @@ class BEVNet(nn.Module):
         c3 = self.cart_up2(c1, c2)
         c4 = self.cart_up1(c0, c3)
 
-        if history is not None:
-            c4 += history
+        # if history is not None:
+        #     c4 += history
 
         """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" ""
-        res_0 = F.interpolate(c0, size=c0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 64, 256, 256]
-        res_1 = F.interpolate(c1, size=c0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 128, 256, 256]
-        res_2 = F.interpolate(c4, size=c0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 64, 256, 256]
-        res = [res_0, res_1, res_2]
+        # res_0 = F.interpolate(c0, size=c0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 64, 256, 256]
+        # res_1 = F.interpolate(c1, size=c0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 128, 256, 256]
+        # res_2 = F.interpolate(c4, size=c0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 64, 256, 256]
+        # res = [res_0, res_1, res_2]
 
-        out = torch.cat(res, dim=1)  # [BS, 256, 256, 256]
+        # out = torch.cat(res, dim=1)  # [BS, 256, 256, 256]
 
-        out = self.conv_1(out)
-        out = self.conv_2(out)
+        # out = self.conv_1(out)
+        # out = self.conv_2(out)
 
-        res_0 = self.aux_head1(res_0)  # [bs, 3, 256, 256]
-        res_1 = self.aux_head2(res_1)  # [bs, 3, 256, 256]
-        res_2 = self.aux_head3(res_2)  # [bs, 3, 256, 256]
+        # res_0 = self.aux_head1(res_0)  # [bs, 3, 256, 256]
+        # res_1 = self.aux_head2(res_1)  # [bs, 3, 256, 256]
+        # res_2 = self.aux_head3(res_2)  # [bs, 3, 256, 256]
 
         # [BS, 64, 256, 256], [BS, 64, 160000, 1], [BS, 3, 256, 256], [BS, 3, 256, 256], [BS, 3, 256, 256], [BS, 64, 256, 256]
-        return out, c1_point, res_0, res_1, res_2, c4
+        # return out, c1_point, res_0, res_1, res_2, c4
+
+        return c4, c1_point_out

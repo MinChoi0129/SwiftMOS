@@ -102,12 +102,12 @@ class AttNet(nn.Module):
 
         """입력 생성"""
         cart_coord_t_0 = coord_cart[:, 0, :, :2].contiguous()  # BS, 160000, 2(x_quan, y_quan), 1
-        cart_coord_t_1 = coord_cart[:, 1, :, :2].contiguous()  # BS, 160000, 2(x_quan, y_quan), 1
-        cart_coord_t_2 = coord_cart[:, 2, :, :2].contiguous()  # BS, 160000, 2(x_quan, y_quan), 1
+        # cart_coord_t_1 = coord_cart[:, 1, :, :2].contiguous()  # BS, 160000, 2(x_quan, y_quan), 1
+        # cart_coord_t_2 = coord_cart[:, 2, :, :2].contiguous()  # BS, 160000, 2(x_quan, y_quan), 1
 
         polar_coord_t_0 = coord_polar[:, 0, :, :2].contiguous()  # BS, 160000, 2(r_quan, theta_quan), 1
-        polar_coord_t_1 = coord_polar[:, 1, :, :2].contiguous()  # BS, 160000, 2(r_quan, theta_quan), 1
-        polar_coord_t_2 = coord_polar[:, 2, :, :2].contiguous()  # BS, 160000, 2(r_quan, theta_quan), 1
+        # polar_coord_t_1 = coord_polar[:, 1, :, :2].contiguous()  # BS, 160000, 2(r_quan, theta_quan), 1
+        # polar_coord_t_2 = coord_polar[:, 2, :, :2].contiguous()  # BS, 160000, 2(r_quan, theta_quan), 1
 
         cart_input = VoxelMaxPool(  # BSx3, 64, 512, 512 (VoxelMaxPool) --> BS, 192, 512, 512 (View)
             pcds_feat=point_feat_pre,
@@ -126,16 +126,22 @@ class AttNet(nn.Module):
         """모델 입력"""
         history = None
         if is_training:
-            for cart_coord_t, polar_coord_t in [
-                (cart_coord_t_2, polar_coord_t_2),
-                (cart_coord_t_1, polar_coord_t_1),
-                (cart_coord_t_0, polar_coord_t_0),
-            ]:
-                bev_feat_2d, point_feat_cart, res_0, res_1, res_2, history = self.pc_bev(
-                    cart_input, polar_input, cart_coord_t, polar_coord_t, history
-                )
+            # for cart_coord_t, polar_coord_t in [
+            #     (cart_coord_t_2, polar_coord_t_2),
+            #     (cart_coord_t_1, polar_coord_t_1),
+            #     (cart_coord_t_0, polar_coord_t_0),
+            # ]:
+            #     bev_feat_2d, point_feat_cart, res_0, res_1, res_2, history = self.pc_bev(
+            #         cart_input, polar_input, cart_coord_t, polar_coord_t, history
+            #     )
+            bev_feat_2d, point_feat_cart = self.pc_bev(
+                cart_input, polar_input, cart_coord_t_0, polar_coord_t_0, history
+            )
         else:
-            bev_feat_2d, point_feat_cart, res_0, res_1, res_2, history = self.pc_bev(
+            # bev_feat_2d, point_feat_cart, res_0, res_1, res_2, history = self.pc_bev(
+            #     cart_input, polar_input, cart_coord_t_0, polar_coord_t_0, history
+            # )
+            bev_feat_2d, point_feat_cart = self.pc_bev(
                 cart_input, polar_input, cart_coord_t_0, polar_coord_t_0, history
             )
 
@@ -152,29 +158,33 @@ class AttNet(nn.Module):
 
         pred_cls = self.pred_layer(fused_point_feat).float()  # [BS, 3, 160000, 1]
 
-        return pred_cls, res_0, res_1, res_2
+        # return pred_cls, res_0, res_1, res_2
+        return pred_cls
 
     def forward(self, pcds_xyzi, pcds_coord, pcds_polar_coord, pcds_target, pcds_bev_target):
         """Forward"""
-        pred_cls, res_0, res_1, res_2 = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord, is_training=True)
+        # pred_cls, res_0, res_1, res_2 = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord, is_training=True)
+        pred_cls = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord, is_training=True)
 
         # shape 변환
         bs, time_num, _, _ = pred_cls.shape
-        res_0 = res_0.view(bs, time_num, -1).unsqueeze(-1)
-        res_1 = res_1.view(bs, time_num, -1).unsqueeze(-1)
-        res_2 = res_2.view(bs, time_num, -1).unsqueeze(-1)
-        pcds_bev_target = pcds_bev_target.view(bs, -1, 1)
+        # res_0 = res_0.view(bs, time_num, -1).unsqueeze(-1)
+        # res_1 = res_1.view(bs, time_num, -1).unsqueeze(-1)
+        # res_2 = res_2.view(bs, time_num, -1).unsqueeze(-1)
+        # pcds_bev_target = pcds_bev_target.view(bs, -1, 1)
 
         # loss 정의
         loss1 = self.criterion_seg_cate(pred_cls, pcds_target) + 3 * lovasz_softmax(pred_cls, pcds_target, ignore=0)
-        loss2 = self.criterion_seg_cate(res_0, pcds_bev_target) + 3 * lovasz_softmax(res_0, pcds_bev_target, ignore=0)
-        loss3 = self.criterion_seg_cate(res_1, pcds_bev_target) + 3 * lovasz_softmax(res_1, pcds_bev_target, ignore=0)
-        loss4 = self.criterion_seg_cate(res_2, pcds_bev_target) + 3 * lovasz_softmax(res_2, pcds_bev_target, ignore=0)
+        # loss2 = self.criterion_seg_cate(res_0, pcds_bev_target) + 3 * lovasz_softmax(res_0, pcds_bev_target, ignore=0)
+        # loss3 = self.criterion_seg_cate(res_1, pcds_bev_target) + 3 * lovasz_softmax(res_1, pcds_bev_target, ignore=0)
+        # loss4 = self.criterion_seg_cate(res_2, pcds_bev_target) + 3 * lovasz_softmax(res_2, pcds_bev_target, ignore=0)
 
-        loss = loss1 + (loss2 + loss3 + loss4) / 3
+        # loss = loss1 + (loss2 + loss3 + loss4) / 3
+        loss = loss1
 
         return loss
 
     def infer(self, pcds_xyzi, pcds_coord, pcds_polar_coord):
-        pred_cls = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord, is_training=False)[0]
+        # pred_cls = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord, is_training=False)[0]
+        pred_cls = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord, is_training=False)
         return pred_cls

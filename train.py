@@ -200,7 +200,7 @@ def main(args, config):
                 save_checkpoint(checkpoint, checkpoint_path)
                 logger.info("Epoch {} 체크포인트 저장: {}".format(epoch, checkpoint_path))
 
-                if epoch >= args.start_validating_epoch:
+                if epoch >= args.start_validating_epoch and epoch % 10 in [0, 1, 2]:
                     # 평가 수행
                     v_model = eval(pModel.prefix)(pModel)
                     v_model.cuda()

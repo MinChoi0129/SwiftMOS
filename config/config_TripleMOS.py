@@ -2,7 +2,7 @@ def get_config():
     class General:
         log_frequency = 100
         name = __name__.rsplit("/")[-1].rsplit(".")[-1]
-        batch_size_per_gpu = 3
+        batch_size_per_gpu = 6
         fp16 = False
 
         SeqDir = "/home/workspace/KITTI/dataset/sequences"
@@ -80,7 +80,7 @@ def get_config():
             rv_grid2point = dict(type="BilinearSample", scale_rate=(1.0, 0.5))
 
         class pretrain:  # 학습 이어서 할 때 여기 keep_training, Epoch 설정
-            pretrain_epoch = 47  # 이 숫자까지 학습했다고 가정함. 즉 +1 한 Epoch을 이어서 시작할 것임.
+            pretrain_epoch = 35  # 이 숫자까지 학습했다고 가정함. 즉 +1 한 Epoch을 이어서 시작할 것임.
 
     class OptimizeParam:
         class optimizer:
