@@ -135,7 +135,9 @@ def main(args, config):
     model_prefix = os.path.join(save_path, "checkpoint")
 
     # reset dist
-    torch.cuda.set_device(args.local_rank)
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    print("Local Rank:", local_rank)
+    torch.cuda.set_device(local_rank)
     torch.distributed.init_process_group(backend="nccl", init_method="env://")
     world_size = torch.distributed.get_world_size()
     rank = torch.distributed.get_rank()
@@ -161,7 +163,6 @@ def main(args, config):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="lidar segmentation")
     parser.add_argument("--config", help="config file path", type=str)
-    parser.add_argument("--local_rank", type=int, default=0)
     parser.add_argument("--start_epoch", type=int, default=0)
     parser.add_argument("--end_epoch", type=int, default=0)
     parser.add_argument("--save_label", default=False, action="store_true")

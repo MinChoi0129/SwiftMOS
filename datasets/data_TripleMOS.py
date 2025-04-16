@@ -1,3 +1,4 @@
+from collections import defaultdict
 import traceback
 import torch
 
@@ -146,42 +147,49 @@ class DataloadTrain(Dataset):
         print("After Training Samples: ", len(self.flist))
 
     def remove_few_static_frames(self):
-        pass
-        # remove_mapping_path = os.path.join(os.path.dirname(__file__), "../config/train_split_dynamic_pointnumber.txt")
-        # with open(remove_mapping_path) as fd:
-        #     lines = fd.readlines()
-        #     lines = [line.strip() for line in lines]
+        """
+        특정 txt 파일에 기록된 (seq_id, file_id) 프레임만 남기고,
+        나머지 정적 프레임(불필요한 프레임)을 제거해 학습 속도를 높이는 함수
+        """
 
-        # pending_dict = {}
-        # for line in lines:
-        #     if line != "":
-        #         seq, fid, _ = line.split()
-        #         if seq in self.seq_split:
-        #             if seq in pending_dict.keys():
-        #                 if fid in pending_dict[seq]:
-        #                     raise ValueError(f"!!!! Duplicate {fid} in seq {seq} in .txt file")
-        #                 pending_dict[seq].append(fid)
-        #             else:
-        #                 pending_dict[seq] = [fid]
+        remove_mapping_path = "config/train_split_dynamic_pointnumber.txt"
 
-        # for seq in self.seq_split:
-        #     try:
-        #         # 문자열 "00", "01" 등 -> 정수 0, 1
-        #         seq_int = int(seq)
+        # 해당 txt 파일이 없으면 그냥 스킵
+        if not os.path.exists(remove_mapping_path):
+            print(f"⚠️ {remove_mapping_path} 파일이 없어 제거 과정을 건너뜁니다.")
+            return
 
-        #         if seq in pending_dict.keys():
-        #             raw_len = len(self.flist[seq_int])  # 11
-        #             scan_files = self.flist[seq_int][0]  # meta_list
+        # (seq, fid, dynamic_num) 파싱해서 keep_dict에 저장
+        with open(remove_mapping_path, "r") as f:
+            lines = f.readlines()
+        lines = [line.strip() for line in lines if line.strip()]
 
-        #             useful_scan_index = np.array(pending_dict[seq]).astype("int")
-        #             scan_files = [scan_files[i] for i in useful_scan_index]
-        #             self.flist[seq_int] = scan_files  # 업데이트
+        keep_dict = {}
+        for line in lines:
+            seq_id, file_id, dynamic_num = line.split()
+            if seq_id not in keep_dict:
+                keep_dict[seq_id] = set()
+            keep_dict[seq_id].add(file_id)
 
-        #             new_len = len(scan_files)
-        #             print(f"Seq {seq} drop {raw_len - new_len}: {raw_len} -> {new_len}")
-        #     except Exception as e:
-        #         traceback.print_exc()
-        #         raise Exception("Stop")
+        # 제거 전 길이 기록
+        before_len = len(self.flist)
+
+        # 새로운 flist 구성
+        new_flist = []
+        for meta_list, meta_list_raw in self.flist:
+            # meta_list[0]에 (fname_pcd, fname_label, pose_diff, seq_id, file_id)가 있다고 가정
+            center_seq_id = meta_list[0][3]
+            center_file_id = meta_list[0][4]
+
+            # txt 파일에 해당 (seq_id, file_id)가 있으면 살림
+            if center_seq_id in keep_dict and center_file_id in keep_dict[center_seq_id]:
+                new_flist.append((meta_list, meta_list_raw))
+
+        # 필터링 완료 후 self.flist에 재할당
+        self.flist = new_flist
+        after_len = len(self.flist)
+
+        print(f"remove_few_static_frames: {before_len} -> {after_len}")
 
     def form_batch(self, pcds_total):
         # 1) augment

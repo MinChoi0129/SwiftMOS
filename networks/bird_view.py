@@ -1,3 +1,5 @@
+import os
+from matplotlib import pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -67,7 +69,7 @@ class BEVNet(nn.Module):
 
         # ----- Header -----
         self.cart_header = self._make_layer(eval("backbone.{}".format(base_block)), cntx_l[0], cntx_l[1], l[0], **sda)
-        self.polar_header = self._make_layer(eval("backbone.{}".format(base_block)), 32, cntx_l[1], l[0], **sda)
+        self.polar_header = self._make_layer(eval("backbone.{}".format(base_block)), cntx_l[0], cntx_l[1], l[0], **sda)
 
         # ----- ResBlock -----
         self.cart_res1 = self._make_layer(
@@ -79,10 +81,15 @@ class BEVNet(nn.Module):
         self.cart_res2 = self._make_layer(
             eval("backbone.{}".format(base_block)), cntx_l[2] * 2, cntx_l[3] * 2, l[2], **sda
         )
+        self.polar_res2 = self._make_layer(
+            eval("backbone.{}".format(base_block)), cntx_l[2] * 2, cntx_l[3] * 2, l[2], **sda
+        )
 
         # ----- UpBlock -----
         self.cart_up2 = AttMerge(cntx_l[2] * 2, cntx_l[3] * 2, fusion_channels2 // 2, scale_factor=2)
         self.cart_up1 = AttMerge(cntx_l[1] * 2, fusion_channels2 // 2, fusion_channels1 // 2, scale_factor=2)
+        self.polar_up2 = AttMerge(cntx_l[2] * 2, cntx_l[3] * 2, fusion_channels2 // 2, scale_factor=2)
+        self.polar_up1 = AttMerge(cntx_l[1] * 2, fusion_channels2 // 2, fusion_channels1 // 2, scale_factor=2)
 
         self.out_channels = fusion_channels1 // 2  # 64
 
@@ -105,6 +112,15 @@ class BEVNet(nn.Module):
             layer.append(block(out_planes, dilation=dilation, use_att=False))
         layer.append(block(out_planes, dilation=dilation, use_att=True))
         return nn.Sequential(*layer)
+
+    @staticmethod
+    def save_feature_as_img(variable, variable_name):
+        save_dir = f"/home/workspace/work/TripleMOS/images/{variable_name}"
+        os.makedirs(save_dir, exist_ok=True)  # 🔧 폴더가 없으면 생성
+
+        single_batch = variable[0].cpu().numpy()
+        for i, c in enumerate(single_batch):
+            plt.imsave(f"{save_dir}/{i:06}.png", c)
 
     def forward(self, c, p, c_coord, p_coord, history=None):
         """
@@ -154,7 +170,7 @@ class BEVNet(nn.Module):
 
         # out = torch.cat(res, dim=1)  # [BS, 256, 256, 256]
 
-        # out = self.conv_1(out)
+        # out = self.conv_1(c4)
         # out = self.conv_2(out)
 
         # res_0 = self.aux_head1(res_0)  # [bs, 3, 256, 256]

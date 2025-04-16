@@ -1,32 +1,45 @@
 import os
 import random
+import re
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import argparse
-import time
-import pdb
-import sys  # 추가됨
+import sys
 import traceback
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-
-import datasets
 import warnings
 from evaluate import val
-from utils.metric import MultiClassMetric
 from models import *
-
 import tqdm
 import logging
 import importlib
 from utils.logger import config_logger
 from utils import builder
-
 from torch.utils.tensorboard import SummaryWriter
 
-from utils.pretty_print import shprint
+"""""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """"""
+
+
+def get_next_case_path(log_root="logs", tags=None):
+    os.makedirs(log_root, exist_ok=True)
+    tags = tags or []
+
+    # case_번호 추출
+    existing = [d for d in os.listdir(log_root) if re.match(r"case_\d{2}", d)]
+    numbers = [int(re.findall(r"\d{2}", name)[0]) for name in existing] if existing else [0]
+    next_num = max(numbers, default=0) + 1
+    case_prefix = f"case_{next_num:02d}"
+
+    # 태그 연결
+    if tags:
+        tag_str = "_".join(tags)
+        folder_name = f"{case_prefix}_{tag_str}"
+    else:
+        folder_name = case_prefix
+
+    return os.path.join(log_root, folder_name)
 
 
 def reduce_tensor(inp):
@@ -42,16 +55,96 @@ def reduce_tensor(inp):
     return reduced_inp
 
 
-def save_checkpoint(state, filename):
-    torch.save(state, filename)
-
-
 def load_checkpoint(filename, model, optimizer, scheduler):
     checkpoint = torch.load(filename, map_location="cpu")
     model.load_state_dict(checkpoint["model_state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
     return checkpoint["epoch"]
+
+
+def get_dataloaders(pDataset, pGen):
+    # 데이터로더 준비
+    train_dataset = eval("datasets.{}.DataloadTrain".format(pDataset.Train.data_src))(pDataset.Train)
+    train_sampler = DistributedSampler(train_dataset)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=pGen.batch_size_per_gpu,
+        shuffle=(train_sampler is None),
+        num_workers=pDataset.Train.num_workers,
+        sampler=train_sampler,
+        pin_memory=True,
+    )
+
+    val_dataset = eval("datasets.{}.DataloadVal".format(pDataset.Val.data_src))(pDataset.Val)
+    val_loader = DataLoader(
+        val_dataset, batch_size=1, shuffle=False, num_workers=pDataset.Val.num_workers, pin_memory=True
+    )
+    return train_loader, val_loader, train_sampler
+
+
+def get_networks_optimizer_scheduler(pModel, pOpt, train_loader, device, local_rank):
+    base_net = TripleMOS.AttNet(pModel)
+    optimizer = builder.get_optimizer(pOpt, base_net)
+    per_epoch_num_iters = len(train_loader)
+    scheduler = builder.get_scheduler(optimizer, pOpt, per_epoch_num_iters)
+    # 동기화 배치 정규화 적용 및 분산 학습 설정
+
+    base_net = nn.SyncBatchNorm.convert_sync_batchnorm(base_net)
+    model = torch.nn.parallel.DistributedDataParallel(
+        base_net.to(device), device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True
+    )
+
+    return base_net, model, optimizer, scheduler
+
+
+def set_starting_condition(args, model_prefix, pModel, pOpt, base_net, optimizer, scheduler, rank, logger):
+    if args.keep_training:
+        checkpoint_file = os.path.join(model_prefix, "{}-checkpoint.pth".format(pModel.pretrain.pretrain_epoch))
+        if os.path.exists(checkpoint_file):
+            start_epoch = load_checkpoint(checkpoint_file, base_net, optimizer, scheduler) + 1
+            if rank == 0:
+                logger.info("Checkpoint {} 불러와서 {} epoch 부터 재개합니다.".format(checkpoint_file, start_epoch))
+        else:
+            if rank == 0:
+                logger.info("Checkpoint {}를 찾을 수 없습니다. 파라미터 처음부터 학습합니다.".format(checkpoint_file))
+            start_epoch = pOpt.schedule.begin_epoch
+    else:
+        if rank == 0:
+            logger.info("Checkpoint를 지정하지 않아 처음부터 학습합니다.")
+        start_epoch = pOpt.schedule.begin_epoch
+
+    return start_epoch
+
+
+def save_checkpoint_and_eval_using_it(
+    epoch, model, optimizer, scheduler, model_prefix, logger, pModel, val_loader, pGen, save_path, writer, rank
+):
+    if rank != 0:
+        return
+    # 체크포인트 저장: epoch, 모델, optimizer, scheduler 상태 포함
+    checkpoint = {
+        "epoch": epoch,
+        "model_state_dict": model.module.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": scheduler.state_dict(),
+    }
+    checkpoint_path = os.path.join(model_prefix, "{}-checkpoint.pth".format(epoch))
+    torch.save(checkpoint, checkpoint_path)
+    logger.info("Epoch {} 체크포인트 저장: {}".format(epoch, checkpoint_path))
+
+    if epoch >= args.start_validating_epoch and epoch % 10 in [0, 2, 6]:
+        # 평가 수행
+        v_model = eval(pModel.prefix)(pModel)
+        v_model.cuda()
+        v_model.eval()
+        eval_checkpoint = torch.load(checkpoint_path, map_location="cpu")
+        v_model.load_state_dict(eval_checkpoint["model_state_dict"])
+        logger.info("{} 체크포인트를 이용하여 평가합니다.".format(checkpoint_path))
+        val(epoch, v_model, val_loader, pGen.category_list, save_path, writer, rank, save_label=False)
+
+
+"""""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """"""
 
 
 def train(epoch, end_epoch, args, model, train_loader, optimizer, scheduler, logger, writer, log_frequency):
@@ -96,79 +189,46 @@ def train(epoch, end_epoch, args, model, train_loader, optimizer, scheduler, log
 
 
 def main(args, config):
-    # config 파싱
+    ################################################################################################################
     pGen, pDataset, pModel, pOpt = config.get_config()
-
     prefix = pGen.name
     save_path = os.path.join("experiments", prefix)
     model_prefix = os.path.join(save_path, "checkpoint")
-
     os.system("mkdir -p {}".format(model_prefix))
+    ################################################################################################################
+
+    ################################################################################################################
     config_logger(os.path.join(save_path, "train_log.txt"))
     logger = logging.getLogger()
-
-    device = torch.device("cuda:{}".format(args.local_rank))
-    torch.cuda.set_device(args.local_rank)
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    device = torch.device("cuda:{}".format(local_rank))
+    torch.cuda.set_device(local_rank)
     torch.distributed.init_process_group(backend="nccl", init_method="env://")
     world_size = torch.distributed.get_world_size()
     rank = torch.distributed.get_rank()
-
     writer = None
     if rank == 0:
-        writer = SummaryWriter(log_dir=os.path.join(save_path, "logs"))
+        log_dir = get_next_case_path(os.path.join(save_path, "logs"), tags=["voxel", "cart_polar", "no_stage"])
+        writer = SummaryWriter(log_dir=log_dir)
+    ################################################################################################################
 
+    ################################################################################################################
     seed = rank * pDataset.Train.num_workers + 50051
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    ################################################################################################################
 
-    #######################################################################################################
-    # 데이터로더 준비
-    train_dataset = eval("datasets.{}.DataloadTrain".format(pDataset.Train.data_src))(pDataset.Train)
-    train_sampler = DistributedSampler(train_dataset)
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=pGen.batch_size_per_gpu,
-        shuffle=(train_sampler is None),
-        num_workers=pDataset.Train.num_workers,
-        sampler=train_sampler,
-        pin_memory=True,
+    ################################################################################################################
+    train_loader, val_loader, train_sampler = get_dataloaders(pDataset=pDataset, pGen=pGen)
+    base_net, model, optimizer, scheduler = get_networks_optimizer_scheduler(
+        pModel=pModel, pOpt=pOpt, train_loader=train_loader, device=device, local_rank=local_rank
     )
-
-    val_dataset = eval("datasets.{}.DataloadVal".format(pDataset.Val.data_src))(pDataset.Val)
-    val_loader = DataLoader(
-        val_dataset, batch_size=1, shuffle=False, num_workers=pDataset.Val.num_workers, pin_memory=True
+    start_epoch = set_starting_condition(
+        args, model_prefix, pModel, pOpt, base_net, optimizer, scheduler, rank, logger
     )
-    #######################################################################################################
-
-    base_net = TripleMOS.AttNet(pModel)
-
-    optimizer = builder.get_optimizer(pOpt, base_net)
-    per_epoch_num_iters = len(train_loader)
-    scheduler = builder.get_scheduler(optimizer, pOpt, per_epoch_num_iters)
-
-    # 동기화 배치 정규화 적용 및 분산 학습 설정
-    base_net = nn.SyncBatchNorm.convert_sync_batchnorm(base_net)
-    model = torch.nn.parallel.DistributedDataParallel(
-        base_net.to(device), device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True
-    )
-
-    # 학습 재개: checkpoint에서 전체 상태 로드
-    if args.keep_training:
-        checkpoint_file = os.path.join(model_prefix, "{}-checkpoint.pth".format(pModel.pretrain.pretrain_epoch))
-        if os.path.exists(checkpoint_file):
-            start_epoch = load_checkpoint(checkpoint_file, base_net, optimizer, scheduler) + 1
-            if rank == 0:
-                logger.info("Checkpoint {} 불러와서 {} epoch 부터 재개합니다.".format(checkpoint_file, start_epoch))
-        else:
-            if rank == 0:
-                logger.info("Checkpoint {}를 찾을 수 없습니다. 파라미터 처음부터 학습합니다.".format(checkpoint_file))
-            start_epoch = pOpt.schedule.begin_epoch
-    else:
-        if rank == 0:
-            logger.info("Checkpoint를 지정하지 않아 처음부터 학습합니다.")
-        start_epoch = pOpt.schedule.begin_epoch
+    ################################################################################################################
 
     try:
         for epoch in range(start_epoch, pOpt.schedule.end_epoch):
@@ -188,57 +248,42 @@ def main(args, config):
                 pGen.log_frequency,
             )
 
-            if rank == 0:
-                # 체크포인트 저장: epoch, 모델, optimizer, scheduler 상태 포함
-                checkpoint = {
-                    "epoch": epoch,
-                    "model_state_dict": model.module.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "scheduler_state_dict": scheduler.state_dict(),
-                }
-                checkpoint_path = os.path.join(model_prefix, "{}-checkpoint.pth".format(epoch))
-                save_checkpoint(checkpoint, checkpoint_path)
-                logger.info("Epoch {} 체크포인트 저장: {}".format(epoch, checkpoint_path))
+            save_checkpoint_and_eval_using_it(
+                epoch,
+                model,
+                optimizer,
+                scheduler,
+                model_prefix,
+                logger,
+                pModel,
+                val_loader,
+                pGen,
+                save_path,
+                writer,
+                rank,
+            )
 
-                if epoch >= args.start_validating_epoch and epoch % 10 in [0, 1, 2]:
-                    # 평가 수행
-                    v_model = eval(pModel.prefix)(pModel)
-                    v_model.cuda()
-                    v_model.eval()
-                    eval_checkpoint = torch.load(checkpoint_path, map_location="cpu")
-                    v_model.load_state_dict(eval_checkpoint["model_state_dict"])
-                    logger.info("{} 체크포인트를 이용하여 평가합니다.".format(checkpoint_path))
-                    val(epoch, v_model, val_loader, pGen.category_list, save_path, writer, rank, save_label=False)
     except KeyboardInterrupt:
-        if rank == 0:
-            logger.info("KeyboardInterrupt 감지됨. 안전하게 종료합니다...")
+        print("Graceful Shutdown...")
+
     except Exception as e:
         if rank == 0:
-            traceback.print_exc()  # 전체 Traceback 출력
+            traceback.print_exc()
+
     finally:
-        # writer 종료 및 프로세스 그룹 해제
         if writer is not None:
             writer.close()
         torch.distributed.destroy_process_group()
-        if rank == 0:
-            logger.info("리소스(CPU, GPU, RAM) 모두 해제되었습니다.")
+        logger.info("리소스(CPU, GPU, RAM) 모두 해제되었습니다.")
+        sys.exit(0)
 
 
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
     parser = argparse.ArgumentParser(description="lidar segmentation")
     parser.add_argument("--config", help="config file path", type=str)
-    parser.add_argument("--local_rank", type=int, default=0)
     parser.add_argument("--start_validating_epoch", type=int, default=0)
     parser.add_argument("--keep_training", action="store_true")
-
     args = parser.parse_args()
     config = importlib.import_module(args.config.replace(".py", "").replace("/", "."))
-    try:
-        main(args, config)
-    except KeyboardInterrupt:
-        # 메인에서도 KeyboardInterrupt를 catch하여 안전 종료
-        print("Graceful Shutdown")
-        traceback.print_exc()
-    finally:
-        sys.exit(0)
+    main(args, config)

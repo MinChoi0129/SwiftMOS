@@ -1,4 +1,6 @@
 import traceback
+from matplotlib import pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -8,7 +10,7 @@ import deep_point
 
 from utils.criterion import CE_OHEM
 from utils.lovasz_losses import lovasz_softmax
-
+import open3d as o3d
 import yaml
 import copy
 
@@ -156,35 +158,85 @@ class AttNet(nn.Module):
             point_feat_cart,
         )  # 모두 [BS, 64, 160000, 1]
 
+        # AttNet.visualize_point_feature(pcds_xyzi, fused_point_feat, c=2)
+
         pred_cls = self.pred_layer(fused_point_feat).float()  # [BS, 3, 160000, 1]
 
         # return pred_cls, res_0, res_1, res_2
-        return pred_cls
+        return pred_cls, None
+
+    @staticmethod
+    def visualize_point_feature(pcds_xyzi, fused_point_feat, c=0):
+        """
+        현재 프레임의 point cloud를 open3d로 시각화 (특정 feature 채널로 색 입힘)
+        단, 원점에서 거리 0~50인 점만 시각화하며, 배경은 검정색으로 설정
+
+        Args:
+            pcds_xyzi: Tensor [BS, 3, 7, N, 1]
+            fused_point_feat: Tensor [BS, 64, N, 1]
+            c: int - 사용할 feature 채널 인덱스 (0~63)
+        """
+        assert pcds_xyzi.shape[1] == 3, "입력은 최근 3프레임이어야 합니다."
+        assert 0 <= c < fused_point_feat.shape[1], f"채널 c는 0~{fused_point_feat.shape[1]-1} 사이여야 함."
+
+        # 현재 프레임 정보만 추출 (t=0)
+        cur_pcd = pcds_xyzi[:, 0]  # [BS, 7, N, 1]
+        xyz = cur_pcd[:, :3, :, 0]  # [BS, 3, N]
+        feat = fused_point_feat[:, c, :, 0]  # [BS, N]
+
+        # 배치 1개만 사용
+        xyz_np = xyz[0].permute(1, 0).cpu().numpy()  # [N, 3]
+        feat_np = feat[0].cpu().numpy()  # [N]
+
+        # 🔹 원점에서의 거리 계산 후 필터링
+        dist = np.linalg.norm(xyz_np, axis=1)
+        mask = (dist >= 0) & (dist <= 50)
+
+        xyz_np = xyz_np[mask]
+        feat_np = feat_np[mask]
+
+        # 색상 매핑
+        norm_feat = (feat_np - feat_np.min()) / (feat_np.ptp() + 1e-8)
+        colors = plt.cm.viridis(norm_feat)[:, :3]
+
+        # Open3D 포인트 클라우드
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(xyz_np)
+        pcd.colors = o3d.utility.Vector3dVector(colors)
+
+        # 🔧 Visualizer 사용해서 배경 검정색으로
+        vis = o3d.visualization.Visualizer()
+        vis.create_window()
+        vis.get_render_option().background_color = np.array([0, 0, 0])  # 검정 배경
+        vis.add_geometry(pcd)
+        vis.run()
+        vis.destroy_window()
 
     def forward(self, pcds_xyzi, pcds_coord, pcds_polar_coord, pcds_target, pcds_bev_target):
         """Forward"""
         # pred_cls, res_0, res_1, res_2 = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord, is_training=True)
-        pred_cls = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord, is_training=True)
+        pred_cls, bev_pred_2d = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord, is_training=True)
 
         # shape 변환
         bs, time_num, _, _ = pred_cls.shape
         # res_0 = res_0.view(bs, time_num, -1).unsqueeze(-1)
         # res_1 = res_1.view(bs, time_num, -1).unsqueeze(-1)
         # res_2 = res_2.view(bs, time_num, -1).unsqueeze(-1)
-        # pcds_bev_target = pcds_bev_target.view(bs, -1, 1)
+        pcds_bev_target = pcds_bev_target.view(bs, -1, 1)
 
         # loss 정의
-        loss1 = self.criterion_seg_cate(pred_cls, pcds_target) + 3 * lovasz_softmax(pred_cls, pcds_target, ignore=0)
-        # loss2 = self.criterion_seg_cate(res_0, pcds_bev_target) + 3 * lovasz_softmax(res_0, pcds_bev_target, ignore=0)
+        loss1 = self.criterion_seg_cate(pred_cls, pcds_target) + 2 * lovasz_softmax(pred_cls, pcds_target, ignore=0)
+        loss2 = self.criterion_seg_cate(bev_pred_2d, pcds_bev_target) + 2 * lovasz_softmax(
+            bev_pred_2d, pcds_bev_target, ignore=0
+        )
         # loss3 = self.criterion_seg_cate(res_1, pcds_bev_target) + 3 * lovasz_softmax(res_1, pcds_bev_target, ignore=0)
         # loss4 = self.criterion_seg_cate(res_2, pcds_bev_target) + 3 * lovasz_softmax(res_2, pcds_bev_target, ignore=0)
 
         # loss = loss1 + (loss2 + loss3 + loss4) / 3
-        loss = loss1
+        loss = loss1 + loss2
 
         return loss
 
     def infer(self, pcds_xyzi, pcds_coord, pcds_polar_coord):
-        # pred_cls = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord, is_training=False)[0]
-        pred_cls = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord, is_training=False)
+        pred_cls = self.stage_forward(pcds_xyzi, pcds_coord, pcds_polar_coord, is_training=False)[0]
         return pred_cls
