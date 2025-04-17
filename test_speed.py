@@ -44,26 +44,27 @@ def main(args, config):
     model.cuda()
 
     (
-        pcds_xyzi,
-        pcds_coord,
-        pcds_polar_coord,
-        pcds_target,
-        pcds_bev_target,
+        xyzi,
+        c_coord,
+        p_coord,
+        label,
+        c_label,
+        p_label,
         valid_mask_list,
         pad_length_list,
         meta_list_raw,
     ) = val_loader.next()
 
-    pcds_xyzi = pcds_xyzi[0, [0]].contiguous().cuda()
-    pcds_coord = pcds_coord[0, [0]].contiguous().cuda()
-    pcds_polar_coord = pcds_polar_coord[0, [0]].contiguous().cuda()
+    xyzi = xyzi[0, [0]].contiguous().cuda()
+    c_coord = c_coord[0, [0]].contiguous().cuda()
+    p_coord = p_coord[0, [0]].contiguous().cuda()
     # pdb.set_trace()
 
     time_cost = []
     with torch.no_grad():
         for i in tqdm.tqdm(range(1000)):
             start = time.time()
-            pred_cls = model.infer(pcds_xyzi, pcds_coord, pcds_polar_coord)
+            pred_cls = model.infer(xyzi, c_coord, p_coord)
             torch.cuda.synchronize()
             end = time.time()
             time_cost.append(end - start)

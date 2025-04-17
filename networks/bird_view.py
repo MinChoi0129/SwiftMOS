@@ -59,53 +59,55 @@ class AttMerge(nn.Module):
         return x_out
 
 
+"""
+VoxelMaxPool : 두번째 파라미터가 갖는 값 quan 기준 W/H * scale_rate = output_size.
+BilinearSample : 두번째 파라미터가 갖는 값 quan 기준 W/H가 첫번째 파라미터로 되기 위한 scale_rate.
+"""
+grid_2_point_scale_05 = backbone.BilinearSample(scale_rate=(0.5, 0.5))
+grid_2_point_scale_025 = backbone.BilinearSample(scale_rate=(0.25, 0.25))
+grid_2_point_scale_0125 = backbone.BilinearSample(scale_rate=(0.125, 0.125))
+
+
 class BEVNet(nn.Module):
-    def __init__(self, base_block, cntx_l, l, VOXEL, nclasses=3, use_att=True):
+    def __init__(self):
         super(BEVNet, self).__init__()
 
-        sda = {"stride": 2, "dilation": 1, "use_att": use_att}
-        fusion_channels2 = cntx_l[3] + cntx_l[2]  # 128 + 64 = 192
-        fusion_channels1 = fusion_channels2 // 2 + cntx_l[1]  # 96 + 32 = 128
-
         # ----- Header -----
-        self.cart_header = self._make_layer(eval("backbone.{}".format(base_block)), cntx_l[0], cntx_l[1], l[0], **sda)
-        self.polar_header = self._make_layer(eval("backbone.{}".format(base_block)), cntx_l[0], cntx_l[1], l[0], **sda)
+        self.cart_header = self._make_layer(backbone.BasicBlock, 192, 32, num_blocks=2)
+        self.polar_header = self._make_layer(backbone.BasicBlock, 192, 32, num_blocks=2)
 
-        # ----- ResBlock -----
-        self.cart_res1 = self._make_layer(
-            eval("backbone.{}".format(base_block)), cntx_l[1] * 2, cntx_l[2], l[1], **sda
-        )
-        self.polar_res1 = self._make_layer(
-            eval("backbone.{}".format(base_block)), cntx_l[1] * 2, cntx_l[2], l[1], **sda
-        )
-        self.cart_res2 = self._make_layer(
-            eval("backbone.{}".format(base_block)), cntx_l[2] * 2, cntx_l[3] * 2, l[2], **sda
-        )
-        self.polar_res2 = self._make_layer(
-            eval("backbone.{}".format(base_block)), cntx_l[2] * 2, cntx_l[3] * 2, l[2], **sda
-        )
+        # ----- Res1Block -----
+        self.cart_res1 = self._make_layer(backbone.BasicBlock, 32, 64, num_blocks=3)
+        self.polar_res1 = self._make_layer(backbone.BasicBlock, 32, 64, num_blocks=3)
 
-        # ----- UpBlock -----
-        self.cart_up2 = AttMerge(cntx_l[2] * 2, cntx_l[3] * 2, fusion_channels2 // 2, scale_factor=2)
-        self.cart_up1 = AttMerge(cntx_l[1] * 2, fusion_channels2 // 2, fusion_channels1 // 2, scale_factor=2)
-        self.polar_up2 = AttMerge(cntx_l[2] * 2, cntx_l[3] * 2, fusion_channels2 // 2, scale_factor=2)
-        self.polar_up1 = AttMerge(cntx_l[1] * 2, fusion_channels2 // 2, fusion_channels1 // 2, scale_factor=2)
+        # ----- Res2Block -----
+        self.cart_res2 = self._make_layer(backbone.BasicBlock, 64, 128, num_blocks=4)
+        self.polar_res2 = self._make_layer(backbone.BasicBlock, 64, 128, num_blocks=4)
 
-        self.out_channels = fusion_channels1 // 2  # 64
+        # ----- Up2Block -----
+        self.cart_up2 = AttMerge(64, 128, 96, scale_factor=2)
+        self.polar_up2 = AttMerge(64, 128, 96, scale_factor=2)
 
-        # ----- Convert Module -----
-        self.cartBEV_2_point_05 = backbone.BilinearSample(in_dim=4, scale_rate=(0.5, 0.5))
-        self.polarBEV_2_point_05 = backbone.BilinearSample(in_dim=4, scale_rate=(0.5, 0.5))
-        self.cartBEV_2_point_025 = backbone.BilinearSample(in_dim=4, scale_rate=(0.25, 0.25))
-        self.polarBEV_2_point_025 = backbone.BilinearSample(in_dim=4, scale_rate=(0.25, 0.25))
+        # ----- Up1Block -----
+        self.cart_up1 = AttMerge(32, 96, 64, scale_factor=2)
+        self.polar_up1 = AttMerge(32, 96, 64, scale_factor=2)
 
-        # self.conv_1 = backbone.BasicConv2d(256, 128, kernel_size=3, padding=1)
-        # self.conv_2 = backbone.BasicConv2d(128, self.out_channels, kernel_size=3, padding=1)
-        # self.aux_head1 = nn.Conv2d(64, nclasses, 1)
-        # self.aux_head2 = nn.Conv2d(128, nclasses, 1)
-        # self.aux_head3 = nn.Conv2d(64, nclasses, 1)
+        self.out_channels = 64
 
-    def _make_layer(self, block, in_planes, out_planes, num_blocks, stride=1, dilation=1, use_att=True):
+        self.c_conv_1 = backbone.BasicConv2d(224, 128, kernel_size=3, padding=1)
+        self.c_conv_2 = backbone.BasicConv2d(128, self.out_channels, kernel_size=3, padding=1)
+        self.p_conv_1 = backbone.BasicConv2d(224, 128, kernel_size=3, padding=1)
+        self.p_conv_2 = backbone.BasicConv2d(128, self.out_channels, kernel_size=3, padding=1)
+
+        self.c_aux_0 = nn.Conv2d(32, 3, 1)
+        self.c_aux_1 = nn.Conv2d(64, 3, 1)
+        self.c_aux_2 = nn.Conv2d(128, 3, 1)
+
+        self.p_aux_0 = nn.Conv2d(32, 3, 1)
+        self.p_aux_1 = nn.Conv2d(64, 3, 1)
+        self.p_aux_2 = nn.Conv2d(128, 3, 1)
+
+    def _make_layer(self, block, in_planes, out_planes, num_blocks, stride=2, dilation=1):
         layer = []
         layer.append(backbone.DownSample2D(in_planes, out_planes, stride=stride))
         for i in range(num_blocks):
@@ -122,7 +124,7 @@ class BEVNet(nn.Module):
         for i, c in enumerate(single_batch):
             plt.imsave(f"{save_dir}/{i:06}.png", c)
 
-    def forward(self, c, p, c_coord, p_coord, history=None):
+    def forward(self, c, p, c_coord, p_coord):
         """
         c : [BS, 192, 512, 512]
         p : [BS, 192, 512, 512]
@@ -130,54 +132,44 @@ class BEVNet(nn.Module):
         p_coord : [BS, 160000, 2, 1]
         """
 
-        # ----- Encoder -----
-        # Header 단계: Cartesian 및 Polar branch를 각각 처리 후 fusion
-
+        # Header 단계
         c0 = self.cart_header(c)  # [BS, 32, 256, 256]
-        c0_point = self.cartBEV_2_point_05(c0, c_coord)  # [BS, 32, 160000, 1]
-        c0_polar = VoxelMaxPool(c0_point, p_coord, output_size=(512, 512), scale_rate=(1.0, 1.0))  # [BS, 32, 512, 512]
-        c0_polar = self.polar_header(c0_polar)  # [BS, 32, 256, 256]
-        c0_point = self.polarBEV_2_point_05(c0_polar, p_coord)
-        c0_cart = VoxelMaxPool(  # 두번째 파라미터가 갖는 값 quan 기준 W/H * scale_rate = output_size. 예시 -> 512 기준 * ? = 256 -> ? = 0.5
-            c0_point, c_coord, output_size=(256, 256), scale_rate=(0.5, 0.5)
-        )  # [Bs, 32, 256, 256]
-        c0 = torch.cat((c0, c0_cart), dim=1)  # [BS, 64, 256, 256]
-
-        # ResBlock 단계
         c1 = self.cart_res1(c0)  # [BS, 64, 128, 128]
-        c1_point_out = self.cartBEV_2_point_025(c1, c_coord)
-        c1_polar = VoxelMaxPool(c1_point_out, p_coord, output_size=(256, 256), scale_rate=(0.5, 0.5))
-        c1_polar = self.polar_res1(c1_polar)
-        c1_point = self.polarBEV_2_point_025(c1_polar, p_coord)
-        c1_cart = VoxelMaxPool(
-            c1_point, c_coord, output_size=(128, 128), scale_rate=(0.25, 0.25)
-        )  # [BS, 64, 128, 128]
-        c1 = torch.cat((c1, c1_cart), dim=1)  # [BS, 128, 128, 128]
+        c1_point = grid_2_point_scale_025(c1, c_coord)
+        c2 = self.cart_res2(c1)  # [BS, 128, 64, 64]
 
-        c2 = self.cart_res2(c1)  # 여기서 c2는 가장 낮은 해상도의 feature map
-        # ----- Decoder: UpBlock들을 사용하여 cross fusion -----
-        c3 = self.cart_up2(c1, c2)
-        c4 = self.cart_up1(c0, c3)
-
-        # if history is not None:
-        #     c4 += history
+        p0 = self.polar_header(p)  # [BS, 32, 256, 256]
+        p1 = self.polar_res1(p0)  # [BS, 64, 128, 128]
+        p1_point = grid_2_point_scale_025(p1, p_coord)
+        p2 = self.polar_res2(p1)  # [BS, 128, 64, 64]
 
         """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" ""
-        # res_0 = F.interpolate(c0, size=c0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 64, 256, 256]
-        # res_1 = F.interpolate(c1, size=c0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 128, 256, 256]
-        # res_2 = F.interpolate(c4, size=c0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 64, 256, 256]
-        # res = [res_0, res_1, res_2]
+        c_res_0 = F.interpolate(c0, size=c0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 32, 256, 256]
+        c_res_1 = F.interpolate(c1, size=c0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 64, 256, 256]
+        c_res_2 = F.interpolate(c2, size=c0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 128, 256, 256]
+        c_res = [c_res_0, c_res_1, c_res_2]
+        c_out = torch.cat(c_res, dim=1)  # [BS, 224, 256, 256]
+        c_out = self.c_conv_2(self.c_conv_1(c_out))  # [BS, 3, 256, 256]
+        c_out_point = grid_2_point_scale_05(c_out, c_coord)
+        c_res_0 = self.c_aux_0(c_res_0)
+        c_res_1 = self.c_aux_1(c_res_1)
+        c_res_2 = self.c_aux_2(c_res_2)
 
-        # out = torch.cat(res, dim=1)  # [BS, 256, 256, 256]
+        p_res_0 = F.interpolate(p0, size=p0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 32, 256, 256]
+        p_res_1 = F.interpolate(p1, size=p0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 64, 256, 256]
+        p_res_2 = F.interpolate(p2, size=p0.size()[2:], mode="bilinear", align_corners=True)  # [BS, 128, 256, 256]
+        p_res = [p_res_0, p_res_1, p_res_2]
+        p_out = torch.cat(p_res, dim=1)  # [BS, 224, 256, 256]
+        p_out = self.p_conv_2(self.p_conv_1(p_out))  # [BS, 3, 256, 256]
+        p_out_point = grid_2_point_scale_05(p_out, p_coord)
+        p_res_0 = self.p_aux_0(p_res_0)
+        p_res_1 = self.p_aux_1(p_res_1)
+        p_res_2 = self.p_aux_2(p_res_2)
 
-        # out = self.conv_1(c4)
-        # out = self.conv_2(out)
-
-        # res_0 = self.aux_head1(res_0)  # [bs, 3, 256, 256]
-        # res_1 = self.aux_head2(res_1)  # [bs, 3, 256, 256]
-        # res_2 = self.aux_head3(res_2)  # [bs, 3, 256, 256]
-
-        # [BS, 64, 256, 256], [BS, 64, 160000, 1], [BS, 3, 256, 256], [BS, 3, 256, 256], [BS, 3, 256, 256], [BS, 64, 256, 256]
-        # return out, c1_point, res_0, res_1, res_2, c4
-
-        return c4, c1_point_out
+        return (
+            (c_out_point, p_out_point),
+            (c1_point, p1_point),
+            (c_res_0, p_res_0),
+            (c_res_1, p_res_1),
+            (c_res_2, p_res_2),
+        )

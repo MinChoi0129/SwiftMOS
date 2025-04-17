@@ -369,7 +369,7 @@ class PointAttFusion(nn.Module):
 
 
 class BilinearSample(nn.Module):
-    def __init__(self, in_dim, scale_rate):
+    def __init__(self, scale_rate):
         super(BilinearSample, self).__init__()
         self.scale_rate = scale_rate
 

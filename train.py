@@ -10,6 +10,7 @@ import traceback
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 import warnings
+from datasets import data_TripleMOS
 from evaluate import val
 from models import *
 import tqdm
@@ -65,7 +66,7 @@ def load_checkpoint(filename, model, optimizer, scheduler):
 
 def get_dataloaders(pDataset, pGen):
     # 데이터로더 준비
-    train_dataset = eval("datasets.{}.DataloadTrain".format(pDataset.Train.data_src))(pDataset.Train)
+    train_dataset = data_TripleMOS.DataloadTrain(pDataset.Train)
     train_sampler = DistributedSampler(train_dataset)
     train_loader = DataLoader(
         train_dataset,
@@ -76,7 +77,7 @@ def get_dataloaders(pDataset, pGen):
         pin_memory=True,
     )
 
-    val_dataset = eval("datasets.{}.DataloadVal".format(pDataset.Val.data_src))(pDataset.Val)
+    val_dataset = data_TripleMOS.DataloadVal(pDataset.Val)
     val_loader = DataLoader(
         val_dataset, batch_size=1, shuffle=False, num_workers=pDataset.Val.num_workers, pin_memory=True
     )
@@ -130,12 +131,13 @@ def save_checkpoint_and_eval_using_it(
         "scheduler_state_dict": scheduler.state_dict(),
     }
     checkpoint_path = os.path.join(model_prefix, "{}-checkpoint.pth".format(epoch))
+
     torch.save(checkpoint, checkpoint_path)
     logger.info("Epoch {} 체크포인트 저장: {}".format(epoch, checkpoint_path))
 
-    if epoch >= args.start_validating_epoch and epoch % 10 in [0, 2, 6]:
+    if epoch >= args.start_validating_epoch and epoch % 10 in [4, 9]:
         # 평가 수행
-        v_model = eval(pModel.prefix)(pModel)
+        v_model = TripleMOS.AttNet(pModel)
         v_model.cuda()
         v_model.eval()
         eval_checkpoint = torch.load(checkpoint_path, map_location="cpu")
@@ -156,8 +158,8 @@ def train(epoch, end_epoch, args, model, train_loader, optimizer, scheduler, log
     else:
         pbar = enumerate(train_loader)
 
-    for i, (pcds_xyzi, pcds_coord, pcds_polar_coord, pcds_target, pcds_bev_target, _) in pbar:
-        loss = model(pcds_xyzi, pcds_coord, pcds_polar_coord, pcds_target, pcds_bev_target)
+    for i, (xyzi, c_coord, p_coord, label, c_label, p_label, _) in pbar:
+        loss = model(xyzi, c_coord, p_coord, label, c_label, p_label)
 
         optimizer.zero_grad()
         loss.backward()
@@ -208,7 +210,7 @@ def main(args, config):
     rank = torch.distributed.get_rank()
     writer = None
     if rank == 0:
-        log_dir = get_next_case_path(os.path.join(save_path, "logs"), tags=["voxel", "cart_polar", "no_stage"])
+        log_dir = get_next_case_path(os.path.join(save_path, "logs"), tags=[])
         writer = SummaryWriter(log_dir=log_dir)
     ################################################################################################################
 

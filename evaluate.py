@@ -59,25 +59,26 @@ def val(epoch, model, val_loader, category_list, save_path, writer, rank=0, save
     f = open(os.path.join(save_path, "val_log.txt"), "a")
     with torch.no_grad():
         for i, (
-            pcds_xyzi,
-            pcds_coord,
-            pcds_polar_coord,
-            pcds_target,
-            pcds_bev_target,
+            xyzi,
+            c_coord,
+            p_coord,
+            label,
+            c_label,
+            p_label,
             valid_mask_list,
             pad_length_list,
             meta_list_raw,
         ) in tqdm.tqdm(enumerate(val_loader)):
             #######################################################################################################
             pred_cls = model.infer(
-                pcds_xyzi.squeeze(0).cuda(),
-                pcds_coord.squeeze(0).cuda(),
-                pcds_polar_coord.squeeze(0).cuda(),
+                xyzi.squeeze(0).cuda(),
+                c_coord.squeeze(0).cuda(),
+                p_coord.squeeze(0).cuda(),
             )
             #######################################################################################################
             pred_cls = F.softmax(pred_cls, dim=1).mean(dim=0).permute(2, 1, 0)[0, :, :].contiguous()  # 160000, 3
-            pcds_target = pcds_target[0, :, 0].contiguous()  # 160000,
-            criterion_cate.addBatch(pcds_target.cpu(), pred_cls.cpu())
+            label = label[0, :, 0].contiguous()  # 160000,
+            criterion_cate.addBatch(label.cpu(), pred_cls.cpu())
             #######################################################################################################
 
             # --------------------------------#

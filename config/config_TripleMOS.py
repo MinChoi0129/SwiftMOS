@@ -2,7 +2,7 @@ def get_config():
     class General:
         log_frequency = 100
         name = __name__.rsplit("/")[-1].rsplit(".")[-1]
-        batch_size_per_gpu = 6
+        batch_size_per_gpu = 5
         fp16 = False
 
         SeqDir = "/home/workspace/KITTI/dataset/sequences"
@@ -24,14 +24,10 @@ def get_config():
             polar_bev_range_theta = (-180, 180)
             polar_bev_range_z = (-4.0, 2.0)
 
-            # RV
-            rv_theta = (-25.0, 3.0)
-            rv_shape = (64, 2048)
-
     class DatasetParam:
         class Train:
             data_src = "data_TripleMOS"
-            num_workers = 2
+            num_workers = 4
             frame_point_num = 160000
             SeqDir = General.SeqDir
             Voxel = General.Voxel
@@ -51,7 +47,7 @@ def get_config():
 
         class Val:
             data_src = "data_TripleMOS"
-            num_workers = 4
+            num_workers = 2
             frame_point_num = 160000
             SeqDir = General.SeqDir
             Voxel = General.Voxel
@@ -80,7 +76,7 @@ def get_config():
             rv_grid2point = dict(type="BilinearSample", scale_rate=(1.0, 0.5))
 
         class pretrain:  # 학습 이어서 할 때 여기 keep_training, Epoch 설정
-            pretrain_epoch = 41  # 이 숫자까지 학습했다고 가정함. 즉 +1 한 Epoch을 이어서 시작할 것임.
+            pretrain_epoch = 3  # 이 숫자까지 학습했다고 가정함. 즉 +1 한 Epoch을 이어서 시작할 것임.
 
     class OptimizeParam:
         class optimizer:
@@ -96,7 +92,7 @@ def get_config():
             end_epoch = 100
             pct_start = 0.01
             final_lr = 1e-6
-            step = 10
-            decay_factor = 0.1
+            step = 3
+            decay_factor = 0.5
 
     return General, DatasetParam, ModelParam, OptimizeParam
