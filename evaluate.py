@@ -63,8 +63,6 @@ def val(epoch, model, val_loader, category_list, save_path, writer, rank=0, save
             c_coord,
             p_coord,
             label,
-            c_label,
-            p_label,
             valid_mask_list,
             pad_length_list,
             meta_list_raw,

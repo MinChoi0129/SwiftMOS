@@ -4,9 +4,9 @@ from matplotlib import pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-
+import torch.nn.functional as F
 from networks import backbone, bird_view, range_view
-from networks.backbone import BilinearSample, CatFusion, get_module
+from networks.backbone import BilinearSample, CatFusion, PointAttFusion, get_module
 import deep_point
 
 from utils.criterion import CE_OHEM
@@ -15,6 +15,7 @@ import open3d as o3d
 import yaml
 import copy
 
+from utils.polar_cartesian import Cart2Polar, Polar2Cart
 from utils.pretty_print import shprint
 
 
@@ -26,6 +27,10 @@ def VoxelMaxPool(pcds_feat, pcds_ind, output_size, scale_rate):
         scale_rate=scale_rate,
     ).to(pcds_feat.dtype)
     return voxel_feat
+
+
+grid_2_point_scale_full = backbone.BilinearSample(scale_rate=(1.0, 1.0))
+grid_2_point_scale_05 = backbone.BilinearSample(scale_rate=(0.5, 0.5))
 
 
 class AttNet(nn.Module):
@@ -60,14 +65,9 @@ class AttNet(nn.Module):
             raise Exception('loss_mode must in ["ce", "wce", "ohem"]')
 
     def _build_network(self):
-        try:
-            # network
-            self.point_pre = backbone.PointNetStacker(7, 64, pre_bn=True, stack_num=2)
-            self.pc_bev = bird_view.BEVNet()
-            self.point_post = CatFusion([64, 64, 64, 64, 64], 64)
-            self.pred_layer = backbone.PredBranch(64, 3)
-        except:
-            traceback.print_exc()
+        self.point_pre = backbone.PointNetStacker(7, 64, pre_bn=True, stack_num=2)
+        self.pc_bev = bird_view.BEVNet()
+        self.pred_layer = backbone.PredBranch(128, 3)
 
     def stage_forward(
         self,
@@ -79,11 +79,9 @@ class AttNet(nn.Module):
 
         """PointNet 기반 간단 처리"""
         point_feats = self.point_pre(xyzi.view(BS * T, C, N, 1))  # BSx3, 64, 160000, 1
-        point_feat_t_0 = point_feats.view(BS, T, -1, N, 1)[:, 0].contiguous()  # BS, 64, 160000, 1
 
         """입력 생성"""
         c_coord_t_0 = c_coord[:, 0, :, :2].contiguous()  # BS, 160000, 2(x_quan, y_quan), 1
-        p_coord_t_0 = p_coord[:, 0, :, :2].contiguous()  # BS, 160000, 2(r_quan, theta_quan), 1
 
         c_point_feats = VoxelMaxPool(  # BSx3, 64, 512, 512 (VoxelMaxPool) --> BS, 192, 512, 512 (View)
             pcds_feat=point_feats,
@@ -100,21 +98,12 @@ class AttNet(nn.Module):
         ).view(BS, -1, self.polar_bev_shape[0], self.polar_bev_shape[1])
 
         """모델 입력"""
-        (
-            (c_out_point, p_out_point),
-            (c1_point, p1_point),
-            (c_res_0, p_res_0),
-            (c_res_1, p_res_1),
-            (c_res_2, p_res_2),
-        ) = self.pc_bev(c_point_feats, p_point_feats, c_coord_t_0, p_coord_t_0)
+        final_cart = self.pc_bev(c_point_feats, p_point_feats)  # [BS, 128, 256, 256]
+        final_cart_as_point = grid_2_point_scale_05(final_cart, c_coord_t_0)  # [BS, 128, 160000, 1]
 
-        """융합 및 예측"""
-        # in: 64, 3, 3, 64, 64, out: 64
-        # shprint(point_feat_t_0, c_out_point, p_out_point, c1_point, p1_point)
-        fused_point_feat = self.point_post(point_feat_t_0, c_out_point, p_out_point, c1_point, p1_point)
-        pred_cls = self.pred_layer(fused_point_feat).float()  # [BS, 3, 160000, 1]
-
-        return pred_cls, (c_res_0, p_res_0), (c_res_1, p_res_1), (c_res_2, p_res_2)
+        """예측"""
+        pred_cls = self.pred_layer(final_cart_as_point).float()  # [BS, 3, 160000, 1]
+        return pred_cls
 
     @staticmethod
     def visualize_point_feature(pcds_xyzi, fused_point_feat, c=0):
@@ -176,35 +165,33 @@ class AttNet(nn.Module):
             for i, c in enumerate(single_batch):
                 plt.imsave(f"{save_dir}/{i:06}.png", c)
 
-    def forward(self, xyzi, c_coord, p_coord, label, c_label, p_label):
+    def _aux_loss(self, pred, label, lovasz_scale):
+        return self.criterion_seg_cate(pred, label) + lovasz_scale * lovasz_softmax(pred, label, ignore=0)
+
+    def consistency_loss_l1(self, pred_cls, pred_cls_raw):
+        """
+        Input:
+            pred_cls, pred_cls_raw (BS, C, N, 1)
+        """
+        pred_cls_softmax = F.softmax(pred_cls, dim=1)
+        pred_cls_raw_softmax = F.softmax(pred_cls_raw, dim=1)
+
+        loss = (pred_cls_softmax - pred_cls_raw_softmax).abs().sum(dim=1).mean()
+        return loss
+
+    def forward(self, xyzi, c_coord, p_coord, xyzi_raw, c_coord_raw, p_coord_raw, label):
         """Forward"""
-        pred_cls, (c_res_0, p_res_0), (c_res_1, p_res_1), (c_res_2, p_res_2) = self.stage_forward(
-            xyzi, c_coord, p_coord
-        )
+        pred_cls = self.stage_forward(xyzi, c_coord, p_coord)
+        pred_cls_raw = self.stage_forward(xyzi_raw, c_coord_raw, p_coord_raw)
 
-        # shape 변환
-        B, T, H, W = pred_cls.shape
-        c_label = c_label.view(B, -1, 1)
-        p_label = p_label.view(B, -1, 1)
+        l_fused_3d = self._aux_loss(pred_cls, label, lovasz_scale=2)
+        l_fused_3d_raw = self._aux_loss(pred_cls_raw, label, lovasz_scale=2)
+        l_fused_3d_consistency = self.consistency_loss_l1(pred_cls, pred_cls_raw)
 
-        c_res_0 = c_res_0.view(B, T, -1).unsqueeze(-1)
-        c_res_1 = c_res_1.view(B, T, -1).unsqueeze(-1)
-        c_res_2 = c_res_2.view(B, T, -1).unsqueeze(-1)
-        p_res_0 = p_res_0.view(B, T, -1).unsqueeze(-1)
-        p_res_1 = p_res_1.view(B, T, -1).unsqueeze(-1)
-        p_res_2 = p_res_2.view(B, T, -1).unsqueeze(-1)
+        loss = (l_fused_3d + l_fused_3d_raw) / 2 + l_fused_3d_consistency
 
-        # loss 정의
-        l1 = self.criterion_seg_cate(pred_cls, label) + 6 * lovasz_softmax(pred_cls, label, ignore=0)
-        l2 = self.criterion_seg_cate(c_res_0, c_label) + 6 * lovasz_softmax(c_res_0, c_label, ignore=0)
-        l3 = self.criterion_seg_cate(c_res_1, c_label) + 6 * lovasz_softmax(c_res_1, c_label, ignore=0)
-        l4 = self.criterion_seg_cate(c_res_2, c_label) + 6 * lovasz_softmax(c_res_2, c_label, ignore=0)
-        l5 = self.criterion_seg_cate(p_res_0, p_label) + 6 * lovasz_softmax(p_res_0, p_label, ignore=0)
-        l6 = self.criterion_seg_cate(p_res_1, p_label) + 6 * lovasz_softmax(p_res_1, p_label, ignore=0)
-        l7 = self.criterion_seg_cate(p_res_2, p_label) + 6 * lovasz_softmax(p_res_2, p_label, ignore=0)
-
-        return l1 + (l2 + l3 + l4 + l5 + l6 + l7) / 6
+        return loss, l_fused_3d, l_fused_3d_raw, l_fused_3d_consistency
 
     def infer(self, xyzi, c_coord, p_coord):
-        pred_cls = self.stage_forward(xyzi, c_coord, p_coord)[0]
+        pred_cls = self.stage_forward(xyzi, c_coord, p_coord)
         return pred_cls

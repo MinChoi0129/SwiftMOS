@@ -21,7 +21,10 @@ import os
 
 def VoxelMaxPool(pcds_feat, pcds_ind, output_size, scale_rate):
     voxel_feat = deep_point.VoxelMaxPool(
-        pcds_feat=pcds_feat.float(), pcds_ind=pcds_ind, output_size=output_size, scale_rate=scale_rate
+        pcds_feat=pcds_feat.float(),
+        pcds_ind=pcds_ind,
+        output_size=output_size,
+        scale_rate=scale_rate,
     ).to(pcds_feat.dtype)
     return voxel_feat
 
@@ -34,8 +37,8 @@ def generate_both_bev_labels(c_coord, p_coord, label):
         VoxelMaxPool(
             pcds_feat=label,
             pcds_ind=c_coord,
-            output_size=(256, 256),
-            scale_rate=(0.5, 0.5),
+            output_size=(512, 512),
+            scale_rate=(1.0, 1.0),
         )
         .squeeze(0)
         .squeeze(0)
@@ -46,8 +49,8 @@ def generate_both_bev_labels(c_coord, p_coord, label):
         VoxelMaxPool(
             pcds_feat=label,
             pcds_ind=p_coord,
-            output_size=(256, 256),
-            scale_rate=(0.5, 0.5),
+            output_size=(512, 512),
+            scale_rate=(1.0, 1.0),
         )
         .squeeze(0)
         .squeeze(0)
@@ -98,7 +101,11 @@ class DataloadTrain(Dataset):
         )
 
         self.aug_raw = utils.DataAugment(
-            noise_mean=0, noise_std=0, theta_range=(0, 0), shift_range=((0, 0), (0, 0), (0, 0)), size_range=(1, 1)
+            noise_mean=0,
+            noise_std=0,
+            theta_range=(0, 0),
+            shift_range=((0, 0), (0, 0), (0, 0)),
+            size_range=(1, 1),
         )
 
         seq_num = config.seq_num
@@ -241,6 +248,38 @@ class DataloadTrain(Dataset):
 
         return pcds_xyzi, pcds_coord, pcds_polar_coord
 
+    def form_batch_raw(self, pcds_total):
+        # augment pcds
+        pcds_total = self.aug_raw(pcds_total)
+
+        N = pcds_total.shape[0] // self.config.seq_num
+        # quantize
+        pcds_xyzi = pcds_total[:, :4]
+        pcds_coord = utils.Quantize(
+            pcds_xyzi,
+            range_x=self.Voxel.cart_bev_range_x,
+            range_y=self.Voxel.cart_bev_range_y,
+            range_z=self.Voxel.cart_bev_range_z,
+            size=self.Voxel.cart_bev_shape,
+        )
+
+        pcds_polar_coord = utils.PolarQuantize(
+            pcds_xyzi,
+            range_r=self.Voxel.polar_bev_range_r,
+            range_theta=self.Voxel.polar_bev_range_theta,
+            range_z=self.Voxel.polar_bev_range_z,
+            size=self.Voxel.polar_bev_shape,
+        )
+
+        # convert numpy matrix to pytorch tensor
+        pcds_xyzi = make_point_feat(pcds_xyzi, pcds_coord)
+        pcds_xyzi = torch.FloatTensor(pcds_xyzi.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
+        pcds_xyzi = pcds_xyzi.permute(0, 2, 1, 3).contiguous()
+
+        pcds_coord = torch.FloatTensor(pcds_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
+        pcds_polar_coord = torch.FloatTensor(pcds_polar_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
+        return pcds_xyzi, pcds_coord, pcds_polar_coord
+
     def form_seq(self, meta_list):
         pc_list = []
         pc_label_list = []
@@ -294,7 +333,12 @@ class DataloadTrain(Dataset):
         for ht in range(len(pc_list)):
             pad_length = self.frame_point_num - pc_list[ht].shape[0]
             assert pad_length > 0
-            pc_list[ht] = np.pad(pc_list[ht], ((0, pad_length), (0, 0)), "constant", constant_values=-1000)
+            pc_list[ht] = np.pad(
+                pc_list[ht],
+                ((0, pad_length), (0, 0)),
+                "constant",
+                constant_values=-1000,
+            )
             pc_list[ht][-pad_length:, 2] = -4000
 
             pc_label_list[ht] = np.pad(pc_label_list[ht], ((0, pad_length),), "constant", constant_values=0)
@@ -303,15 +347,17 @@ class DataloadTrain(Dataset):
         label = torch.LongTensor(pc_label_list[0].astype(np.long)).unsqueeze(-1)
 
         xyzi, c_coord, p_coord = self.form_batch(pc_list.copy())
-        c_label, p_label = generate_both_bev_labels(c_coord, p_coord, label)
+        xyzi_raw, c_coord_raw, p_coord_raw = self.form_batch_raw(pc_list.copy())
+        # c_label, p_label = generate_both_bev_labels(c_coord, p_coord, label)
 
         return (
             xyzi,  # 3, 7, 160000, 1
             c_coord,  # 3, 160000, 3, 1
             p_coord,  # 3, 160000, 3, 1
+            xyzi_raw,
+            c_coord_raw,
+            p_coord_raw,
             label,  # 160000, 1
-            c_label,  # 256, 256, 1
-            p_label,  # 256, 256, 1
             meta_list_raw,
         )
 
@@ -481,7 +527,12 @@ class DataloadVal(Dataset):
         for ht in range(len(pc_list)):
             pad_length = self.frame_point_num - pc_list[ht].shape[0]
             assert pad_length >= 0
-            pc_list[ht] = np.pad(pc_list[ht], ((0, pad_length), (0, 0)), "constant", constant_values=-1000)
+            pc_list[ht] = np.pad(
+                pc_list[ht],
+                ((0, pad_length), (0, 0)),
+                "constant",
+                constant_values=-1000,
+            )
             pc_list[ht][-pad_length:, 2] = -4000
 
             pc_label_list[ht] = np.pad(pc_label_list[ht], ((0, pad_length),), "constant", constant_values=0)
@@ -491,15 +542,13 @@ class DataloadVal(Dataset):
         label = torch.LongTensor(pc_label_list[0].astype(np.long)).unsqueeze(-1)
 
         xyzi, c_coord, p_coord = self.form_batch_tta(pc_list.copy())
-        c_label, p_label = generate_both_bev_labels(c_coord[0], p_coord[0], label)
+        # c_label, p_label = generate_both_bev_labels(c_coord[0], p_coord[0], label)
 
         return (
             xyzi,
             c_coord,
             p_coord,
             label,
-            c_label,
-            p_label,
             valid_mask_list,
             pad_length_list,
             meta_list_raw,

@@ -392,3 +392,56 @@ class BilinearSample(nn.Module):
             grid_feat, grid_sample_2, mode="bilinear", padding_mode="zeros", align_corners=True
         )  # (BS, C, N, S)
         return pc_feat
+
+
+# ---------- ViT(Self‑Attention) 모듈 ----------
+class PatchEmbed(nn.Module):
+    def __init__(self, in_ch=192, embed_dim=192, patch=32):
+        super().__init__()
+        self.patch = patch
+        self.proj = nn.Conv2d(in_ch, embed_dim, kernel_size=patch, stride=patch)
+
+    def forward(self, x):  # x: [B, C, H, W]
+        x = self.proj(x)  # [B, C_e, H/p, W/p]
+        B, C, H, W = x.shape
+        x = x.flatten(2).transpose(1, 2).contiguous()  # [B, N, C_e]   (N=H/p*W/p)
+        return x, H, W
+
+
+class ViTEncoder(nn.Module):
+    """살짝 경량화된 Self‑Attention 인코더 (입/출력 크기는 동일)"""
+
+    def __init__(
+        self,
+        in_ch: int = 192,
+        embed_dim: int = 128,  # ↓ 192 → 128
+        patch: int = 32,
+        depth: int = 1,  # ↓ 2 → 1
+        nhead: int = 4,  # ↓ 8 → 4
+        mlp_ratio: float = 2.0,  # ↓ 4 → 2
+    ):
+        super().__init__()
+        self.patch = patch
+        self.patch_embed = PatchEmbed(in_ch, embed_dim, patch)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=embed_dim,
+            nhead=nhead,
+            dim_feedforward=int(embed_dim * mlp_ratio),
+            dropout=0.1,
+            activation="gelu",
+            batch_first=True,
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, depth)
+
+        # 1×1‑Conv 로 다시 192채널로 복원
+        self.proj_out = nn.Conv2d(embed_dim, in_ch, kernel_size=1, bias=False)
+
+    def forward(self, x):  # [B, 192, 512, 512]
+        tokens, Ht, Wt = self.patch_embed(x)  # [B, N, 128]
+        tokens = self.transformer(tokens)  # [B, N, 128]
+        tokens = tokens.transpose(1, 2).contiguous().reshape(x.size(0), -1, Ht, Wt)  # [B, 128, Ht, Wt]
+
+        tokens = F.interpolate(tokens, scale_factor=self.patch, mode="bilinear", align_corners=False)
+        out = self.proj_out(tokens)  # [B, 192, 512, 512]
+        return out + x  # Skip‑add

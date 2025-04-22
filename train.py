@@ -135,7 +135,14 @@ def save_checkpoint_and_eval_using_it(
     torch.save(checkpoint, checkpoint_path)
     logger.info("Epoch {} 체크포인트 저장: {}".format(epoch, checkpoint_path))
 
-    if epoch >= args.start_validating_epoch and epoch % 10 in [4, 9]:
+    run_EVAL = False
+    if epoch >= args.start_validating_epoch:
+        if epoch <= 10 and epoch in [0, 2, 9]:
+            run_EVAL = True
+        elif epoch % 10 in [4, 9]:
+            run_EVAL = True
+
+    if run_EVAL:
         # 평가 수행
         v_model = TripleMOS.AttNet(pModel)
         v_model.cuda()
@@ -158,17 +165,28 @@ def train(epoch, end_epoch, args, model, train_loader, optimizer, scheduler, log
     else:
         pbar = enumerate(train_loader)
 
-    for i, (xyzi, c_coord, p_coord, label, c_label, p_label, _) in pbar:
-        loss = model(xyzi, c_coord, p_coord, label, c_label, p_label)
+    for i, (xyzi, c_coord, p_coord, xyzi_raw, c_coord_raw, p_coord_raw, label, _) in pbar:
+        (
+            loss,
+            l_fused_3d,
+            l_fused_3d_raw,
+            l_fused_3d_consistency,
+        ) = model(xyzi, c_coord, p_coord, xyzi_raw, c_coord_raw, p_coord_raw, label)
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         scheduler.step()
 
-        reduced_loss = reduce_tensor(loss)
+        reduced_losses = {
+            "total_loss": reduce_tensor(loss),
+            "l_fused_3d": reduce_tensor(l_fused_3d),
+            "l_fused_3d_raw": reduce_tensor(l_fused_3d_raw),
+            "l_fused_3d_consistency": reduce_tensor(l_fused_3d_consistency),
+        }
+
         if rank == 0:
-            pbar.set_postfix(loss="%.4f" % (reduced_loss.item() / torch.distributed.get_world_size()))
+            pbar.set_postfix(loss="%.4f" % (reduced_losses["total_loss"].item() / torch.distributed.get_world_size()))
             if i % log_frequency == 0:
                 current_lr = optimizer.state_dict()["param_groups"][0]["lr"]
                 log_str = "Epoch: [{}]/[{}]; Iteration: [{}]/[{}]; lr: {}; loss: {}".format(
@@ -177,17 +195,18 @@ def train(epoch, end_epoch, args, model, train_loader, optimizer, scheduler, log
                     i,
                     len(train_loader),
                     current_lr,
-                    reduced_loss.item() / torch.distributed.get_world_size(),
+                    reduced_losses["total_loss"].item() / torch.distributed.get_world_size(),
                 )
                 logger.info(log_str)
 
             global_step = epoch * len(train_loader) + i  # epoch와 iteration을 조합하여 global step 계산
             if writer:
-                writer.add_scalar(
-                    "Train/Loss",
-                    reduced_loss.item() / torch.distributed.get_world_size(),
-                    global_step,
-                )
+                for key, value in reduced_losses.items():
+                    writer.add_scalar(
+                        f"Train/{key}",
+                        value.item() / torch.distributed.get_world_size(),
+                        global_step,
+                    )
 
 
 def main(args, config):

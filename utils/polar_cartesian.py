@@ -54,6 +54,7 @@ class Polar2Cart(nn.Module):
                 align_corners=True,
             )
             .permute(0, 2, 1, 3)
+            .contiguous()
             .reshape(-1, ref_feat.shape[1])
         )
         return grid_feat
@@ -105,6 +106,7 @@ class Cart2Polar(nn.Module):
                 align_corners=True,
             )
             .permute(0, 2, 1, 3)
+            .contiguous()
             .reshape(-1, ref_feat.shape[1])
         )
         return polar_feat
