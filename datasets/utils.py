@@ -149,6 +149,41 @@ def recolor(pcds_labels, color_map):
 ##############################################################################################
 
 
+def PolarQuantize(
+    pcds,
+    range_phi=(-180.0, 180.0),  # degree
+    range_r=(0.0, 50.0),  # metre
+    size=(64, 2048),
+):  # (radial, angular)
+    """
+    pcds           : (N,3) xyz
+    range_phi_deg  : (deg_min, deg_max)
+    range_r        : (r_min, r_max)
+    size           : (n_r, n_phi)  → (세로, 가로) = (64, 2048)
+    return         : (N,2)  (r_idx, phi_idx)  float32
+    """
+    # 1) xyz → polar
+    x, y = pcds[:, 0], pcds[:, 1]
+    theta_rad = np.arctan2(y, x)  # [-π, π] rad
+    r = np.sqrt(x**2 + y**2)
+
+    # 2) degree 범위 → rad 범위
+    phi_min, phi_max = np.deg2rad(range_phi)  # rad 변환
+    r_min, r_max = range_r
+    n_r, n_phi = size
+
+    # 3) bin 간격
+    dphi = (phi_max - phi_min) / n_phi
+    dr = (r_max - r_min) / n_r
+
+    # 4) 실수 인덱스 계산
+    phi_idx = (theta_rad - phi_min) / dphi  # 가로(열) 인덱스
+    r_idx = (r - r_min) / dr  # 세로(행) 인덱스
+
+    # 5) 스택 (행, 열 순서) 후 반환
+    return np.stack((r_idx, phi_idx), axis=-1)
+
+
 def Quantize(pcds, range_x, range_y, range_z, size):
     x = pcds[:, 0].copy()
     y = pcds[:, 1].copy()
@@ -170,59 +205,15 @@ def Quantize(pcds, range_x, range_y, range_z, size):
     return pcds_quan
 
 
-def PolarQuantize(
-    pcds_xyzi,
-    range_r,  # 예: (2, 50)
-    range_theta,  # 예: (-180, 180)
-    range_z,  # 예: (-4.0, 2.0)
-    size,  # 예: (512, 512, 30)
-):
-    """
-    Polar Quantization with float-type output
-    pcds_xyzi : (N, 4)
-    range_r : (r_min, r_max)
-    range_theta : (theta_min_degree, theta_max_degree)
-    range_z : (z_min, z_max)
-    size : (r_size, theta_size, z_size)
-    """
-
-    x = pcds_xyzi[:, 0].copy()
-    y = pcds_xyzi[:, 1].copy()
-    z = pcds_xyzi[:, 2].copy()
-
-    # 1) r 범위 클리핑 & 정규화
-    r = np.sqrt(x**2 + y**2)
-    r = np.clip(r, *range_r)
-    dr = (range_r[1] - range_r[0]) / size[0]
-    r_quan = (r - range_r[0]) / dr
-
-    # 2) theta 범위 처리
-    # arctan2 결과가 이미 [-π, π] 범위를 가집니다.
-    theta = np.arctan2(y, x)  # [-π, π] 범위
-    theta_min_rad, theta_max_rad = np.deg2rad(range_theta)  # -180 ~ 180도를 radian으로 변환
-
-    # 범위 밖 각도는 clip 처리
-    theta = np.clip(theta, theta_min_rad, theta_max_rad)
-
-    dtheta = (theta_max_rad - theta_min_rad) / size[1]
-    theta_quan = (theta - theta_min_rad) / dtheta
-
-    # 3) z 범위 클리핑 & 정규화
-    z = np.clip(z, *range_z)
-    dz = (range_z[1] - range_z[0]) / size[2]
-    z_quan = (z - range_z[0]) / dz
-
-    # 4) 최종 스택 (r, theta, z)
-    pcds_quan = np.stack((r_quan, theta_quan, z_quan), axis=-1)
-    return pcds_quan  # (N, 3) float quantized coords
-
-
 def SphereQuantize(pcds, phi_range, theta_range, size):
     H = size[0]
     W = size[1]
 
     phi_range_radian = (phi_range[0] * np.pi / 180.0, phi_range[1] * np.pi / 180.0)
-    theta_range_radian = (theta_range[0] * np.pi / 180.0, theta_range[1] * np.pi / 180.0)
+    theta_range_radian = (
+        theta_range[0] * np.pi / 180.0,
+        theta_range[1] * np.pi / 180.0,
+    )
 
     dphi = (phi_range_radian[1] - phi_range_radian[0]) / W
     dtheta = (theta_range_radian[1] - theta_range_radian[0]) / H
@@ -240,7 +231,7 @@ def SphereQuantize(pcds, phi_range, theta_range, size):
     return sphere_coords
 
 
-def CylinderQuantize(pcds, phi_range=(-180.0, 180.0), range_z=(-3, 5), size=(64, 2048)):
+def CylinderQuantize(pcds, phi_range, range_z, size):
     H = size[0]
     W = size[1]
 
@@ -262,7 +253,12 @@ def CylinderQuantize(pcds, phi_range=(-180.0, 180.0), range_z=(-3, 5), size=(64,
 
 class DataAugment:
     def __init__(
-        self, noise_mean=0, noise_std=0.01, theta_range=(-45, 45), shift_range=(0, 0), size_range=(0.95, 1.05)
+        self,
+        noise_mean=0,
+        noise_std=0.01,
+        theta_range=(-45, 45),
+        shift_range=(0, 0),
+        size_range=(0.95, 1.05),
     ):
         self.noise_mean = noise_mean
         self.noise_std = noise_std
@@ -278,7 +274,9 @@ class DataAugment:
          pcds: (N, C)
         """
         # random noise
-        xyz_noise = np.random.normal(self.noise_mean, self.noise_std, size=(pcds.shape[0], 3))
+        xyz_noise = np.random.normal(
+            self.noise_mean, self.noise_std, size=(pcds.shape[0], 3)
+        )
         pcds[:, :3] = pcds[:, :3] + xyz_noise
 
         # random shift

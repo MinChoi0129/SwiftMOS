@@ -1,4 +1,5 @@
 import os
+import time
 import traceback
 from matplotlib import pyplot as plt
 import numpy as np
@@ -67,43 +68,47 @@ class AttNet(nn.Module):
     def _build_network(self):
         self.point_pre = backbone.PointNetStacker(7, 64, pre_bn=True, stack_num=2)
         self.pc_bev = bird_view.BEVNet()
-        self.pred_layer = backbone.PredBranch(128, 3)
+        self.pred_layer = backbone.PredBranch(64, 3)
+        self.point_post = CatFusion([64, 64, 64], 64)
 
     def stage_forward(
         self,
-        xyzi,  # BS, 3, 7, 160000, 1 (BS, 최근3프레임, 7=(x, y, z, intensity, dist, diff_x, diff_y), 160000(중 n개), 1)
-        c_coord,  # BS, 3, 160000, 3, 1 (BS, 최근3프레임, 160000(중 n개), 3=(x,y,z quantized), 1)
-        p_coord,  # BS, 3, 160000, 3, 1 (BS, 최근3프레임, 160000(중 n개), 3=(r,theta,z quantized), 1)
+        xyzi,  # (BS, 3, 7, 160000, 1)
+        c_coord,  # (BS, 3, 160000, 3, 1)
+        p_coord,  # (BS, 3, 160000, 2, 1)
+        deep_64,  # (BS, 128, 64, 64)
     ):
-        BS, T, C, N, _ = xyzi.shape  # BS, 3, 7, 160000, 1
+        BS, T, C, N, _ = xyzi.shape
 
-        """PointNet 기반 간단 처리"""
-        point_feats = self.point_pre(xyzi.view(BS * T, C, N, 1))  # BSx3, 64, 160000, 1
+        # PointNet
+        point_feats = self.point_pre(xyzi.view(BS * T, C, N, 1))  # (BS×3, 64, 160000, 1)
 
-        """입력 생성"""
-        c_coord_t_0 = c_coord[:, 0, :, :2].contiguous()  # BS, 160000, 2(x_quan, y_quan), 1
-
-        c_point_feats = VoxelMaxPool(  # BSx3, 64, 512, 512 (VoxelMaxPool) --> BS, 192, 512, 512 (View)
+        # Cart BEV 투영
+        bev_feat_in = VoxelMaxPool(
             pcds_feat=point_feats,
-            pcds_ind=c_coord.view(BS * T, N, 3, 1)[:, :, :2],  # BSx3, 160000, 2, 1
-            output_size=self.cart_bev_shape[:2],  # (512, 512)
+            pcds_ind=c_coord.view(BS * T, N, 3, 1)[:, :, :2],
+            output_size=self.cart_bev_shape[:2],
             scale_rate=(1.0, 1.0),
-        ).view(BS, -1, self.cart_bev_shape[0], self.cart_bev_shape[1])
+        ).view(BS, -1, *self.cart_bev_shape[:2])
 
-        p_point_feats = VoxelMaxPool(
-            pcds_feat=point_feats,
-            pcds_ind=p_coord.view(BS * T, N, 3, 1)[:, :, :2],
-            output_size=self.polar_bev_shape[:2],  # (512, 512)
-            scale_rate=(1.0, 1.0),
-        ).view(BS, -1, self.polar_bev_shape[0], self.polar_bev_shape[1])
+        # t_0 시점 데이터(피처, c좌표, p좌표)
+        point_feats_t_0 = point_feats.view(BS, T, -1, N, 1)[:, 0].contiguous()  # (BS, 64, 160000, 1)
+        c_coord_t_0 = c_coord[:, 0, :, :2].contiguous()
+        p_coord_t_0 = p_coord[:, 0].contiguous()
 
-        """모델 입력"""
-        final_cart = self.pc_bev(c_point_feats, p_point_feats)  # [BS, 128, 256, 256]
-        final_cart_as_point = grid_2_point_scale_05(final_cart, c_coord_t_0)  # [BS, 128, 160000, 1]
+        (
+            out_as_point,  # (BS, 64, 160000, 1)
+            polar_res1_as_point,  # (BS, 64, 160000, 1)
+            b0_256,  # (BS, 3, 256, 256)
+            b1_256,  # (BS, 3, 256, 256)
+            b2_256,  # (BS, 3, 256, 256)
+            deep_64,  # (BS, 128, 64, 64)
+        ) = self.pc_bev(bev_feat_in, c_coord_t_0, p_coord_t_0, deep_64)
 
-        """예측"""
-        pred_cls = self.pred_layer(final_cart_as_point).float()  # [BS, 3, 160000, 1]
-        return pred_cls
+        point_feat_out = self.point_post(point_feats_t_0, out_as_point, polar_res1_as_point)
+        pred_cls = self.pred_layer(point_feat_out).float()  # (BS, 3, 160000, 1)
+
+        return pred_cls, b0_256, b1_256, b2_256, deep_64
 
     @staticmethod
     def visualize_point_feature(pcds_xyzi, fused_point_feat, c=0):
@@ -179,19 +184,47 @@ class AttNet(nn.Module):
         loss = (pred_cls_softmax - pred_cls_raw_softmax).abs().sum(dim=1).mean()
         return loss
 
-    def forward(self, xyzi, c_coord, p_coord, xyzi_raw, c_coord_raw, p_coord_raw, label):
-        """Forward"""
-        pred_cls = self.stage_forward(xyzi, c_coord, p_coord)
-        pred_cls_raw = self.stage_forward(xyzi_raw, c_coord_raw, p_coord_raw)
+    def forward(self, xyzi_stages, c_coord_stages, p_coord_stages, label_stages, c_label_stages):
+        """Start 3-Stage Forwarding"""
+        stage = 3
+        losses, loss_3d, loss_2d = [], [], []
+        deep_64 = None
+        for i in range(stage):
+            xyzi_single = xyzi_stages[:, i].contiguous()
+            c_coord_single = c_coord_stages[:, i].contiguous()
+            p_coord_single = p_coord_stages[:, i].contiguous()
 
-        l_fused_3d = self._aux_loss(pred_cls, label, lovasz_scale=2)
-        l_fused_3d_raw = self._aux_loss(pred_cls_raw, label, lovasz_scale=2)
-        l_fused_3d_consistency = self.consistency_loss_l1(pred_cls, pred_cls_raw)
+            pred_cls, b0_256, b1_256, b2_256, deep_64 = self.stage_forward(
+                xyzi_single, c_coord_single, p_coord_single, deep_64
+            )
 
-        loss = (l_fused_3d + l_fused_3d_raw) / 2 + l_fused_3d_consistency
+            bs, time_num, _, _ = pred_cls.shape
+            b0_256 = b0_256.view(bs, time_num, -1).unsqueeze(-1)
+            b1_256 = b1_256.view(bs, time_num, -1).unsqueeze(-1)
+            b2_256 = b2_256.view(bs, time_num, -1).unsqueeze(-1)
 
-        return loss, l_fused_3d, l_fused_3d_raw, l_fused_3d_consistency
+            label_single = label_stages[:, i].contiguous()
+            c_label_single = c_label_stages[:, i].contiguous().view(bs, -1, 1)
 
-    def infer(self, xyzi, c_coord, p_coord):
-        pred_cls = self.stage_forward(xyzi, c_coord, p_coord)
-        return pred_cls
+            l_3d = self._aux_loss(pred_cls, label_single, lovasz_scale=3)
+            l_2d_0 = self._aux_loss(b0_256, c_label_single, lovasz_scale=3)
+            l_2d_1 = self._aux_loss(b1_256, c_label_single, lovasz_scale=3)
+            l_2d_2 = self._aux_loss(b2_256, c_label_single, lovasz_scale=3)
+            l_2d = (l_2d_0 + l_2d_1 + l_2d_2) / 3
+
+            loss = l_3d + l_2d
+            losses.append(loss)
+            loss_3d.append(l_3d)
+            loss_2d.append(l_2d)
+
+        loss = sum(losses) / stage
+        loss_3d = sum(loss_3d) / stage
+        loss_2d = sum(loss_2d) / stage
+
+        return loss, loss_3d, loss_2d
+
+    def infer(self, xyzi_single, c_coord_single, p_coord_single, deep_64):
+        pred_cls, b0_256, b1_256, b2_256, deep_64 = self.stage_forward(
+            xyzi_single, c_coord_single, p_coord_single, deep_64
+        )
+        return pred_cls, deep_64

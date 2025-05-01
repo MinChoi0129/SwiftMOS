@@ -1,13 +1,12 @@
 import math
 import os
+import time
 from matplotlib import pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 import deep_point
-from networks.pc_bev import FeatureExchange
-from utils.polar_cartesian import Cart2Polar, Polar2Cart
 from utils.pretty_print import shprint
 from . import backbone
 
@@ -69,58 +68,50 @@ class AttMerge(nn.Module):
 VoxelMaxPool : 두번째 파라미터가 갖는 값 quan 기준 W/H * scale_rate = output_size.
 BilinearSample : 두번째 파라미터가 갖는 값 quan 기준 W/H가 첫번째 파라미터로 되기 위한 scale_rate.
 """
-c2p_128 = Cart2Polar(polar_size=(128, 128), cart_size=(128, 128))
-p2c_128 = Polar2Cart(polar_size=(128, 128), cart_size=(128, 128))
-p2c_256 = Polar2Cart(polar_size=(256, 256), cart_size=(256, 256))
+
+grid_2_point_scale_full = backbone.BilinearSample(scale_rate=(1.0, 1.0))
+grid_2_point_scale_05 = backbone.BilinearSample(scale_rate=(0.5, 0.5))
+grid_2_point_scale_025 = backbone.BilinearSample(scale_rate=(0.25, 0.25))
+bev_scale_rates = {
+    512: (1.0, grid_2_point_scale_full),
+    256: (0.5, grid_2_point_scale_05),
+    128: (0.25, grid_2_point_scale_025),
+}
+polar_scale_rates = {
+    64: (1.0, grid_2_point_scale_full),
+    32: (0.5, grid_2_point_scale_05),
+    16: (0.25, grid_2_point_scale_025),
+}
 
 
 class BEVNet(nn.Module):
     def __init__(self):
         super(BEVNet, self).__init__()
 
-        # ---------- SA 인코더 ----------
-        self.cart_sa = backbone.ViTEncoder(in_ch=192)
-        self.polar_sa = backbone.ViTEncoder(in_ch=192)
-
         # ----- Header -----
-        self.cart_header = self._make_layer(backbone.BasicBlock, 192, 32, num_blocks=2)
-        self.polar_header = self._make_layer(backbone.BasicBlock, 192, 32, num_blocks=2)
+        self.cart_header = self._make_layer(backbone.BasicBlock, 192, 32, 2)
+        self.polar_header = self._make_layer(backbone.BasicBlock, 32, 32, 1, stride=1)
 
         # ----- ResBlock1 -----
-        self.cart_res1 = self._make_layer(backbone.BasicBlock, 32, 64, num_blocks=3)
-        self.polar_res1 = self._make_layer(backbone.BasicBlock, 32, 64, num_blocks=3)
-        self.cart_res1_fuse = nn.Sequential(
-            nn.Conv2d(128, 64, kernel_size=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-        )
-        self.polar_res1_fuse = nn.Sequential(
-            nn.Conv2d(128, 64, kernel_size=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-        )
+        self.cart_res1 = self._make_layer(backbone.BasicBlock, 64, 64, 3)
+        self.polar_res1 = self._make_layer(backbone.BasicBlock, 64, 64, 2, stride=1)
 
         # ----- ResBlock2 -----
-        self.cart_res2 = self._make_layer(backbone.BasicBlock, 64, 128, num_blocks=4)
-        self.polar_res2 = self._make_layer(backbone.BasicBlock, 64, 128, num_blocks=4)
+        self.cart_res2 = self._make_layer(backbone.BasicBlock, 128, 128, 4)
 
-        # ----- UpBlock2 -----
-        self.cart_up2 = AttMerge(64, 128, 96, scale_factor=2)
-        self.polar_up2 = AttMerge(64, 128, 96, scale_factor=2)
-        self.cart_up2_fuse = nn.Sequential(
-            nn.Conv2d(192, 96, kernel_size=1, bias=False),
-            nn.BatchNorm2d(96),
-            nn.ReLU(inplace=True),
-        )
-        self.polar_up2_fuse = nn.Sequential(
-            nn.Conv2d(192, 96, kernel_size=1, bias=False),
-            nn.BatchNorm2d(96),
+        # ───────── Temporal fusion (Addition) ─────────
+        self.add_fuse = nn.Sequential(
+            nn.Conv2d(128, 128, kernel_size=1, bias=False),
+            nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
         )
 
-        # ----- UpBlock1 -----
-        self.cart_up1 = AttMerge(32, 96, 64, scale_factor=2)
-        self.polar_up1 = AttMerge(32, 96, 64, scale_factor=2)
+        self.out_conv1 = backbone.BasicConv2d(320, 128, kernel_size=3, padding=1)
+        self.out_conv2 = backbone.BasicConv2d(128, 64, kernel_size=3, padding=1)
+
+        self.aux_head1 = nn.Conv2d(64, 3, 1)
+        self.aux_head2 = nn.Conv2d(128, 3, 1)
+        self.aux_head3 = nn.Conv2d(128, 3, 1)
 
     def _make_layer(self, block, in_planes, out_planes, num_blocks, stride=2, dilation=1):
         layer = []
@@ -139,49 +130,84 @@ class BEVNet(nn.Module):
         for i, c in enumerate(single_batch):
             plt.imsave(f"{save_dir}/{i:06}.png", c)
 
-    def fuse(self, cart, polar, mode):
-        cart_fuse = torch.cat((p2c_128(polar, cart), cart), dim=1)
-        polar_fuse = torch.cat((c2p_128(cart, polar), polar), dim=1)
-        if mode == "res1":
-            c1 = self.cart_res1_fuse(cart_fuse)
-            p1 = self.polar_res1_fuse(polar_fuse)
-            return c1, p1
-        elif mode == "up2":
-            c3 = self.cart_up2_fuse(cart_fuse)
-            p3 = self.polar_up2_fuse(polar_fuse)
-            return c3, p3
-        else:
-            raise ValueError("Invalid mode. Choose 'res1' or 'up2'.")
+    def c2p(self, c, c_coord_curr, p_coord_curr):
+        BS, C, H, W = c.shape
 
-    def forward(self, c, p):
+        scale_rate, grid_to_point = bev_scale_rates[H]
+        point = grid_to_point(c, c_coord_curr)
+
+        return VoxelMaxPool(
+            pcds_feat=point,
+            pcds_ind=p_coord_curr,
+            output_size=(int(64 * scale_rate), int(2048 * scale_rate)),
+            scale_rate=(scale_rate, scale_rate),
+        )
+
+    def p2c(self, p, c_coord_curr, p_coord_curr):
+        BS, C, H, W = p.shape
+
+        scale_rate, grid_to_point = polar_scale_rates[H]
+        point = grid_to_point(p, p_coord_curr)
+
+        return VoxelMaxPool(
+            pcds_feat=point,
+            pcds_ind=c_coord_curr,
+            output_size=(int(512 * scale_rate), int(512 * scale_rate)),
+            scale_rate=(scale_rate, scale_rate),
+        )
+
+    def forward(self, c, c_coord_curr, p_coord_curr, deep_64):
         """
         c : [BS, 192, 512, 512]
-        p : [BS, 192, 512, 512]
-        c_coord : [BS, 160000, 2, 1]
-        p_coord : [BS, 160000, 2, 1]
+        c_coord_curr : [BS, 160000, 2, 1]
+        p_coord_curr : [BS, 160000, 2, 1]
+        deep_64 : [BS, 128, 64, 64]
         """
 
-        # Self Attention 단계
-        c = self.cart_sa(c)  # [BS, 192, 512, 512]
-        p = self.polar_sa(p)  # [BS, 192, 512, 512]
-
-        # Header 단계
+        # --------------- Cart ---------------
         c0 = self.cart_header(c)  # [BS, 32, 256, 256]
-        p0 = self.polar_header(p)  # [BS, 32, 256, 256]
+        c0_to_polar = self.c2p(c0, c_coord_curr, p_coord_curr)  # [BS, 32, 32, 1024]
+
+        p0 = self.polar_header(c0_to_polar)  # [BS, 32, 32, 1024]
+        p0_to_cart = self.p2c(p0, c_coord_curr, p_coord_curr)  # [BS, 32, 256, 256]
+
+        c0 = torch.cat((c0, p0_to_cart), dim=1)  # [BS, 64, 256, 256]
 
         c1 = self.cart_res1(c0)  # [BS, 64, 128, 128]
-        p1 = self.polar_res1(p0)  # [BS, 64, 128, 128]
-        c1, p1 = self.fuse(c1, p1, mode="res1")
+        c1_to_polar = self.c2p(c1, c_coord_curr, p_coord_curr)  # [BS, 64, 16, 512]
+
+        p1 = self.polar_res1(c1_to_polar)  # [BS, 64, 16, 512]
+        p1_to_cart = self.p2c(p1, c_coord_curr, p_coord_curr)  # [BS, 64, 128, 128]
+
+        c1 = torch.cat((c1, p1_to_cart), dim=1)  # [BS, 128, 128, 128]
 
         c2 = self.cart_res2(c1)  # [BS, 128, 64, 64]
-        p2 = self.polar_res2(p1)  # [BS, 128, 64, 64]
 
-        c3 = self.cart_up2(c1, c2)  # [BS, 96, 128, 128]
-        p3 = self.polar_up2(p1, p2)  # [BS, 96, 128, 128]
-        c3, p3 = self.fuse(c3, p3, mode="up2")
+        # --------------- Temporal Memory ---------------
+        if deep_64 is not None:
+            fused = c2 + deep_64  #
+            c2 = self.add_fuse(fused)
 
-        c4 = self.cart_up1(c0, c3)  # [BS, 64, 256, 256]
-        p4 = self.polar_up1(p0, p3)  # [BS, 64, 256, 256]
-        cart_up1_fuse = torch.cat((p2c_256(p4, c4), c4), dim=1)  # [BS, 128, 256, 256]
+        # --------------- Decoder ---------------
+        res0 = F.interpolate(c0, size=c0.size()[2:], mode="bilinear", align_corners=True)
+        res1 = F.interpolate(c1, size=c0.size()[2:], mode="bilinear", align_corners=True)
+        res2 = F.interpolate(c2, size=c0.size()[2:], mode="bilinear", align_corners=True)
+        out = self.out_conv2(self.out_conv1(torch.cat([res0, res1, res2], dim=1)))  # [BS, 64, 256, 256]
 
-        return cart_up1_fuse  # [BS, 128, 256, 256]
+        # --------------- BackProject ---------------
+        out_as_point = grid_2_point_scale_05(out, c_coord_curr)
+        polar_res1_as_point = grid_2_point_scale_05(p1, p_coord_curr)
+
+        # --------------- Aux Head ---------------
+        res0 = self.aux_head1(res0)
+        res1 = self.aux_head2(res1)
+        res2 = self.aux_head3(res2)
+
+        return (
+            out_as_point,  # (BS, 64, 160000, 1)
+            polar_res1_as_point,  # (BS, 64, 160000, 1)
+            res0,  # (BS, 3, 256, 256)
+            res1,  # (BS, 3, 256, 256)
+            res2,  # (BS, 3, 256, 256)
+            c2,  # (BS, 128, 64, 64)
+        )

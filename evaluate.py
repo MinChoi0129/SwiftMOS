@@ -51,30 +51,36 @@ def mapping(label, mapdict):
     return lut[label]
 
 
-def val(epoch, model, val_loader, category_list, save_path, writer, rank=0, save_label=True):
+def val(epoch, model, val_loader, category_list, save_path, writer, save_label=True):
     criterion_cate = MultiClassMetric(category_list)
     model.eval()
 
     # 결과 로그를 기록할 파일
     f = open(os.path.join(save_path, "val_log.txt"), "a")
     with torch.no_grad():
+        deep_64 = None
         for i, (
             xyzi,
             c_coord,
             p_coord,
             label,
+            bev_label,
             valid_mask_list,
             pad_length_list,
             meta_list_raw,
         ) in tqdm.tqdm(enumerate(val_loader)):
             #######################################################################################################
-            pred_cls = model.infer(
+            pred_cls, deep_64 = model.infer(
                 xyzi.squeeze(0).cuda(),
                 c_coord.squeeze(0).cuda(),
                 p_coord.squeeze(0).cuda(),
+                deep_64,
             )
             #######################################################################################################
-            pred_cls = F.softmax(pred_cls, dim=1).mean(dim=0).permute(2, 1, 0)[0, :, :].contiguous()  # 160000, 3
+            pred_cls = F.softmax(
+                pred_cls[0].squeeze(-1), dim=0
+            ).T.contiguous()  # 160000, 3
+
             label = label[0, :, 0].contiguous()  # 160000,
             criterion_cate.addBatch(label.cpu(), pred_cls.cpu())
             #######################################################################################################
@@ -105,7 +111,9 @@ def val(epoch, model, val_loader, category_list, save_path, writer, rank=0, save
                 if not os.path.exists(prediction_folder_path):
                     os.makedirs(prediction_folder_path)
 
-                prediction_label_path = os.path.join(prediction_folder_path, frame_id + ".label")
+                prediction_label_path = os.path.join(
+                    prediction_folder_path, frame_id + ".label"
+                )
                 final_np_prediction.tofile(prediction_label_path)
 
         #######################################################################################################
@@ -125,26 +133,21 @@ def main(args, config):
     # parsing cfg
     pGen, pDataset, pModel, pOpt = config.get_config()
 
-    if args.save_label and args.start_epoch != args.end_epoch:
-        raise ValueError("라벨 저장 모드일 시 Epoch은 하나로 지정돼야합니다.")
-
     prefix = pGen.name
     save_path = os.path.join("experiments", prefix)
-    print("save_path:", save_path)
     model_prefix = os.path.join(save_path, "checkpoint")
-
-    # reset dist
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    print("Local Rank:", local_rank)
-    torch.cuda.set_device(local_rank)
-    torch.distributed.init_process_group(backend="nccl", init_method="env://")
-    world_size = torch.distributed.get_world_size()
-    rank = torch.distributed.get_rank()
+    model_epoch = args.model_epoch
 
     # define dataloader
-    val_dataset = eval("datasets.{}.DataloadVal".format(pDataset.Val.data_src))(pDataset.Val)
+    val_dataset = eval("datasets.{}.DataloadVal".format(pDataset.Val.data_src))(
+        pDataset.Val
+    )
     val_loader = DataLoader(
-        val_dataset, batch_size=1, shuffle=False, num_workers=pDataset.Val.num_workers, pin_memory=True
+        val_dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=pDataset.Val.num_workers,
+        pin_memory=True,
     )
 
     # define model
@@ -152,18 +155,26 @@ def main(args, config):
     model.cuda()
     model.eval()
 
-    for epoch in range(args.start_epoch, args.end_epoch + 1, world_size):
-        if (epoch + rank) < (args.end_epoch + 1):
-            pretrain_model = os.path.join(model_prefix, "{}-checkpoint.pth".format(epoch + rank))
-            model.load_state_dict(torch.load(pretrain_model, map_location="cpu")["model_state_dict"])
-            val(epoch + rank, model, val_loader, pGen.category_list, save_path, None, rank, save_label=args.save_label)
+    pretrain_model = os.path.join(model_prefix, "{}-checkpoint.pth".format(model_epoch))
+    print("pretrain_model:", pretrain_model)
+    model.load_state_dict(
+        torch.load(pretrain_model, map_location="cpu")["model_state_dict"]
+    )
+    val(
+        model_epoch,
+        model,
+        val_loader,
+        pGen.category_list,
+        save_path,
+        None,
+        save_label=args.save_label,
+    )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="lidar segmentation")
     parser.add_argument("--config", help="config file path", type=str)
-    parser.add_argument("--start_epoch", type=int, default=0)
-    parser.add_argument("--end_epoch", type=int, default=0)
+    parser.add_argument("--model_epoch", type=int, default=0)
     parser.add_argument("--save_label", default=False, action="store_true")
 
     args = parser.parse_args()

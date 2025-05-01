@@ -21,6 +21,8 @@ import tqdm
 import importlib
 import torch.backends.cudnn as cudnn
 
+from utils.pretty_print import shprint
+
 cudnn.benchmark = True
 cudnn.enabled = True
 
@@ -44,27 +46,31 @@ def main(args, config):
     model.cuda()
 
     (
-        xyzi,
-        c_coord,
-        p_coord,
-        label,
+        xyzi,  # [1, 3, 7, 160000, 1]
+        c_coord,  # [1, 3, 160000, 3, 1]
+        p_coord,  # [1, 3, 160000, 3, 1]
+        label,  # [1, 160000, 1]
+        c_label,  # [1, 256, 256, 1]
         valid_mask_list,
         pad_length_list,
         meta_list_raw,
     ) = val_loader.next()
 
-    xyzi = xyzi[0, [0]].contiguous().cuda()
-    c_coord = c_coord[0, [0]].contiguous().cuda()
-    p_coord = p_coord[0, [0]].contiguous().cuda()
-    # pdb.set_trace()
+    xyzi = xyzi.cuda()
+    c_coord = c_coord.cuda()
+    p_coord = p_coord.cuda()
+    label = label.cuda()
+    c_label = c_label.cuda()
 
+    pred_cls, deep_64 = model.infer(xyzi, c_coord, p_coord, None)
     time_cost = []
     with torch.no_grad():
         for i in tqdm.tqdm(range(1000)):
             start = time.time()
-            pred_cls = model.infer(xyzi, c_coord, p_coord)
+            pred_cls, deep_64 = model.infer(xyzi, c_coord, p_coord, deep_64)
             torch.cuda.synchronize()
             end = time.time()
+            print((end - start) * 1000, "ms")
             time_cost.append(end - start)
 
     print("Time: ", np.array(time_cost[20:]).mean() * 1000, "ms")

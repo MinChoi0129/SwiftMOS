@@ -12,7 +12,13 @@ act_layer = nn.ReLU(inplace=True)
 def conv3x3(in_planes, out_planes, stride=1, dilation=1, bias=False):
     """3x3 convolution with padding"""
     return nn.Conv2d(
-        in_planes, out_planes, kernel_size=3, stride=stride, padding=dilation, dilation=dilation, bias=bias
+        in_planes,
+        out_planes,
+        kernel_size=3,
+        stride=stride,
+        padding=dilation,
+        dilation=dilation,
+        bias=bias,
     )
 
 
@@ -21,11 +27,20 @@ class DownSample2D(nn.Module):
         super(DownSample2D, self).__init__()
         # self.in_planes, self.out_planes = in_planes, out_planes
         self.conv_branch = nn.Sequential(
-            conv3x3(in_planes, out_planes, stride=stride, dilation=1), nn.BatchNorm2d(out_planes)
+            conv3x3(in_planes, out_planes, stride=stride, dilation=1),
+            nn.BatchNorm2d(out_planes),
         )
 
         self.pool_branch = nn.Sequential(
-            nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=1, padding=0, dilation=1, bias=False),
+            nn.Conv2d(
+                in_planes,
+                out_planes,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                dilation=1,
+                bias=False,
+            ),
             nn.BatchNorm2d(out_planes),
             nn.MaxPool2d(kernel_size=3, stride=stride, padding=1, dilation=1),
         )
@@ -55,7 +70,15 @@ class TConv(nn.Module):
         self.cin = cin
         self.cout = cout
         self.conv_t = nn.Sequential(
-            nn.Conv2d(cin, cout, kernel_size=(3, 1), stride=1, padding=0, dilation=1, bias=False),
+            nn.Conv2d(
+                cin,
+                cout,
+                kernel_size=(3, 1),
+                stride=1,
+                padding=0,
+                dilation=1,
+                bias=False,
+            ),
             nn.BatchNorm2d(cout),
             act_layer,
         )
@@ -76,7 +99,15 @@ class TConcat(nn.Module):
         self.cin = cin
         self.cout = cout
         self.conv_tcat = nn.Sequential(
-            nn.Conv2d(cin * T, cout, kernel_size=1, stride=1, padding=0, dilation=1, bias=False),
+            nn.Conv2d(
+                cin * T,
+                cout,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                dilation=1,
+                bias=False,
+            ),
             nn.BatchNorm2d(cout),
             act_layer,
         )
@@ -139,7 +170,16 @@ class CSAtt(nn.Module):
 
 
 class BasicConv2d(nn.Module):
-    def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=0, dilation=1, relu=True):
+    def __init__(
+        self,
+        in_planes,
+        out_planes,
+        kernel_size,
+        stride=1,
+        padding=0,
+        dilation=1,
+        relu=True,
+    ):
         super(BasicConv2d, self).__init__()
         self.relu = relu
         self.conv = nn.Conv2d(
@@ -167,10 +207,20 @@ class BasicBlock(nn.Module):
     def __init__(self, inplanes, reduction=1, dilation=1, use_att=True):
         super(BasicBlock, self).__init__()
         self.layer = nn.Sequential(
-            conv3x3(in_planes=inplanes, out_planes=inplanes // reduction, stride=1, dilation=1),
+            conv3x3(
+                in_planes=inplanes,
+                out_planes=inplanes // reduction,
+                stride=1,
+                dilation=1,
+            ),
             nn.BatchNorm2d(inplanes // reduction),
             act_layer,
-            conv3x3(in_planes=inplanes // reduction, out_planes=inplanes, stride=1, dilation=dilation),
+            conv3x3(
+                in_planes=inplanes // reduction,
+                out_planes=inplanes,
+                stride=1,
+                dilation=dilation,
+            ),
             nn.BatchNorm2d(inplanes),
         )
 
@@ -193,10 +243,20 @@ class BasicBlockv2(nn.Module):
     def __init__(self, inplanes, reduction=1, dilation=1, use_att=True):
         super(BasicBlockv2, self).__init__()
         self.layer = nn.Sequential(
-            conv3x3(in_planes=inplanes, out_planes=inplanes // reduction, stride=1, dilation=1),
+            conv3x3(
+                in_planes=inplanes,
+                out_planes=inplanes // reduction,
+                stride=1,
+                dilation=1,
+            ),
             nn.BatchNorm2d(inplanes // reduction),
             act_layer,
-            conv3x3(in_planes=inplanes // reduction, out_planes=inplanes, stride=1, dilation=dilation),
+            conv3x3(
+                in_planes=inplanes // reduction,
+                out_planes=inplanes,
+                stride=1,
+                dilation=dilation,
+            ),
             nn.BatchNorm2d(inplanes),
         )
 
@@ -233,25 +293,58 @@ class PointNet(nn.Module):
         if pre_bn and post_act:
             self.layer = nn.Sequential(
                 nn.BatchNorm2d(cin),
-                nn.Conv2d(cin, cout, kernel_size=1, stride=1, padding=0, dilation=1, bias=False),
+                nn.Conv2d(
+                    cin,
+                    cout,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                    dilation=1,
+                    bias=False,
+                ),
                 nn.BatchNorm2d(cout),
                 act_layer,
             )
         elif (not pre_bn) and post_act:
             self.layer = nn.Sequential(
-                nn.Conv2d(cin, cout, kernel_size=1, stride=1, padding=0, dilation=1, bias=False),
+                nn.Conv2d(
+                    cin,
+                    cout,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                    dilation=1,
+                    bias=False,
+                ),
                 nn.BatchNorm2d(cout),
                 act_layer,
             )
         elif pre_bn and (not post_act):
             self.layer = nn.Sequential(
                 nn.BatchNorm2d(cin),
-                nn.Conv2d(cin, cout, kernel_size=1, stride=1, padding=0, dilation=1, bias=False),
+                nn.Conv2d(
+                    cin,
+                    cout,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                    dilation=1,
+                    bias=False,
+                ),
                 nn.BatchNorm2d(cout),
             )
         elif (not pre_bn) and (not post_act):
             self.layer = nn.Sequential(
-                nn.Conv2d(cin, cout, kernel_size=1, stride=1, padding=0, dilation=1, bias=False), nn.BatchNorm2d(cout)
+                nn.Conv2d(
+                    cin,
+                    cout,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                    dilation=1,
+                    bias=False,
+                ),
+                nn.BatchNorm2d(cout),
             )
 
     def forward(self, x):
@@ -287,7 +380,10 @@ class BranchAttFusion(nn.Module):
 
         assert len(self.in_channel_list) >= 2
 
-        self.weights = nn.Parameter(torch.ones(len(self.in_channel_list), dtype=torch.float32), requires_grad=True)
+        self.weights = nn.Parameter(
+            torch.ones(len(self.in_channel_list), dtype=torch.float32),
+            requires_grad=True,
+        )
         self.feat_model = nn.ModuleList()
         for i, in_channel in enumerate(self.in_channel_list):
             self.feat_model.append(PointNet(cin=in_channel, cout=out_channel, pre_bn=False))
@@ -340,7 +436,13 @@ class PointAttFusion(nn.Module):
         assert len(self.in_channel_list) >= 2
 
         self.att_layer = nn.Sequential(
-            nn.Conv2d(len(self.in_channel_list) * out_channel, out_channel, kernel_size=1, padding=0, bias=False),
+            nn.Conv2d(
+                len(self.in_channel_list) * out_channel,
+                out_channel,
+                kernel_size=1,
+                padding=0,
+                bias=False,
+            ),
             nn.BatchNorm2d(out_channel),
             act_layer,
             nn.Conv2d(out_channel, len(self.in_channel_list), kernel_size=1, padding=0),
@@ -389,7 +491,11 @@ class BilinearSample(nn.Module):
 
         grid_sample_2 = torch.stack((grid_sample_x, grid_sample_y), dim=-1)  # (BS, N, S, 2)
         pc_feat = F.grid_sample(
-            grid_feat, grid_sample_2, mode="bilinear", padding_mode="zeros", align_corners=True
+            grid_feat,
+            grid_sample_2,
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=True,
         )  # (BS, C, N, S)
         return pc_feat
 
@@ -409,39 +515,79 @@ class PatchEmbed(nn.Module):
 
 
 class ViTEncoder(nn.Module):
-    """살짝 경량화된 Self‑Attention 인코더 (입/출력 크기는 동일)"""
+    r"""
+    Vision-Transformer encoder that preserves spatial size.
+
+    Args
+    ----
+    in_ch     : 입력/출력 채널 수 (기본 192)
+    patch     : 패치 크기 (16 ⇒ 32×32 토큰)
+    depth     : Transformer layer 수
+    nhead     : Multi-head 수  (= in_ch // 48 권장)
+    mlp_ratio : FFN hidden 차수 비율
+    drop_path : Stochastic depth 확률
+    """
 
     def __init__(
         self,
         in_ch: int = 192,
-        embed_dim: int = 128,  # ↓ 192 → 128
         patch: int = 32,
-        depth: int = 1,  # ↓ 2 → 1
-        nhead: int = 4,  # ↓ 8 → 4
-        mlp_ratio: float = 2.0,  # ↓ 4 → 2
+        depth: int = 2,
+        nhead: int = 4,
+        mlp_ratio: float = 4.0,
+        drop_path: float = 0.0,
     ):
         super().__init__()
         self.patch = patch
-        self.patch_embed = PatchEmbed(in_ch, embed_dim, patch)
+        self.embed = nn.Conv2d(in_ch, in_ch, kernel_size=patch, stride=patch, bias=False)  # 512→32
+        num_tokens = (512 // patch) ** 2
+
+        self.pos = nn.Parameter(torch.zeros(1, num_tokens, in_ch))
+        nn.init.trunc_normal_(self.pos, std=0.02)
 
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=embed_dim,
+            d_model=in_ch,
             nhead=nhead,
-            dim_feedforward=int(embed_dim * mlp_ratio),
-            dropout=0.1,
+            dim_feedforward=int(in_ch * mlp_ratio),
             activation="gelu",
             batch_first=True,
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, depth)
+        dpr = torch.linspace(0, drop_path, depth)  # drop-path 구간별
+        self.blocks = nn.ModuleList([_add_drop_path(encoder_layer, dpr[i].item()) for i in range(depth)])
 
-        # 1×1‑Conv 로 다시 192채널로 복원
-        self.proj_out = nn.Conv2d(embed_dim, in_ch, kernel_size=1, bias=False)
+        self.proj = nn.Conv2d(in_ch, in_ch, 1, bias=False)  # 채널 보정
+        nn.init.kaiming_normal_(self.proj.weight, mode="fan_out")
 
-    def forward(self, x):  # [B, 192, 512, 512]
-        tokens, Ht, Wt = self.patch_embed(x)  # [B, N, 128]
-        tokens = self.transformer(tokens)  # [B, N, 128]
-        tokens = tokens.transpose(1, 2).contiguous().reshape(x.size(0), -1, Ht, Wt)  # [B, 128, Ht, Wt]
+    # ---------------------------------------------------------
 
-        tokens = F.interpolate(tokens, scale_factor=self.patch, mode="bilinear", align_corners=False)
-        out = self.proj_out(tokens)  # [B, 192, 512, 512]
-        return out + x  # Skip‑add
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: (B, 192, 512, 512) → (B, 192, 512, 512)"""
+        B, C, H, W = x.shape  # (B,192,512,512)
+        assert H == W == 512, "지원 해상도는 512×512 고정입니다."
+
+        # 1) 패치 임베딩
+        tok = self.embed(x)  # (B,192,32,32)
+        tok = tok.flatten(2).transpose(1, 2)  # (B,1024,192)
+
+        # 2) 위치 부여 + Transformer Encoder
+        tok = tok + self.pos
+        for blk in self.blocks:
+            tok = blk(tok)  # (B,1024,192)
+
+        # 3) 원래 해상도로 복원
+        feat = tok.transpose(1, 2).contiguous().reshape(B, C, 32, 32)
+        feat = F.interpolate(feat, scale_factor=self.patch, mode="bilinear", align_corners=False)
+
+        # 4) 1×1 conv + 입력 잔차
+        out = self.proj(feat) + x  # (B,192,512,512)
+        return out
+
+
+# ----- util: stochastic depth 삽입 ------------------------------------------
+def _add_drop_path(layer: nn.TransformerEncoderLayer, drop_prob: float):
+    if drop_prob == 0.0:
+        return layer
+    from timm.models.layers import DropPath  # timm ≥0.9 필요
+
+    layer.drop_path = DropPath(drop_prob)
+    return layer

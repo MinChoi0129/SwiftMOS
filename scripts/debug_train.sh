@@ -2,8 +2,8 @@
 
 ConfigPath=config/config_TripleMOS.py
 
-export CUDA_VISIBLE_DEVICES=1,2,3
-NumGPUs=3 # should be the 'length of cuda visible devices'
+export CUDA_VISIBLE_DEVICES=0
+NumGPUs=1 # should be the 'length of cuda visible devices'
 
 python3 -m torch.distributed.run \
     --nproc_per_node=$NumGPUs train.py \

@@ -1,3 +1,4 @@
+import datetime
 import os
 import random
 import re
@@ -79,7 +80,11 @@ def get_dataloaders(pDataset, pGen):
 
     val_dataset = data_TripleMOS.DataloadVal(pDataset.Val)
     val_loader = DataLoader(
-        val_dataset, batch_size=1, shuffle=False, num_workers=pDataset.Val.num_workers, pin_memory=True
+        val_dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=pDataset.Val.num_workers,
+        pin_memory=True,
     )
     return train_loader, val_loader, train_sampler
 
@@ -93,7 +98,10 @@ def get_networks_optimizer_scheduler(pModel, pOpt, train_loader, device, local_r
 
     base_net = nn.SyncBatchNorm.convert_sync_batchnorm(base_net)
     model = torch.nn.parallel.DistributedDataParallel(
-        base_net.to(device), device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True
+        base_net.to(device),
+        device_ids=[local_rank],
+        output_device=local_rank,
+        find_unused_parameters=True,
     )
 
     return base_net, model, optimizer, scheduler
@@ -118,8 +126,22 @@ def set_starting_condition(args, model_prefix, pModel, pOpt, base_net, optimizer
     return start_epoch
 
 
+"""""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """"""
+
+
 def save_checkpoint_and_eval_using_it(
-    epoch, model, optimizer, scheduler, model_prefix, logger, pModel, val_loader, pGen, save_path, writer, rank
+    epoch,
+    model,
+    optimizer,
+    scheduler,
+    model_prefix,
+    logger,
+    pModel,
+    val_loader,
+    pGen,
+    save_path,
+    writer,
+    rank,
 ):
     if rank != 0:
         return
@@ -150,28 +172,43 @@ def save_checkpoint_and_eval_using_it(
         eval_checkpoint = torch.load(checkpoint_path, map_location="cpu")
         v_model.load_state_dict(eval_checkpoint["model_state_dict"])
         logger.info("{} 체크포인트를 이용하여 평가합니다.".format(checkpoint_path))
-        val(epoch, v_model, val_loader, pGen.category_list, save_path, writer, rank, save_label=False)
+        val(
+            epoch,
+            v_model,
+            val_loader,
+            pGen.category_list,
+            save_path,
+            writer,
+            save_label=False,
+        )
 
 
-"""""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """""" """"""
-
-
-def train(epoch, end_epoch, args, model, train_loader, optimizer, scheduler, logger, writer, log_frequency):
+def train(
+    epoch,
+    end_epoch,
+    args,
+    model,
+    train_loader,
+    optimizer,
+    scheduler,
+    logger,
+    writer,
+    log_frequency,
+):
     rank = torch.distributed.get_rank()
     model.train()
     # rank 0인 경우 tqdm 진행바 생성, 나머지는 단순 반복
     if rank == 0:
-        pbar = tqdm.tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch}/{end_epoch}")
+        pbar = tqdm.tqdm(
+            enumerate(train_loader),
+            total=len(train_loader),
+            desc=f"Epoch {epoch}/{end_epoch}",
+        )
     else:
         pbar = enumerate(train_loader)
 
-    for i, (xyzi, c_coord, p_coord, xyzi_raw, c_coord_raw, p_coord_raw, label, _) in pbar:
-        (
-            loss,
-            l_fused_3d,
-            l_fused_3d_raw,
-            l_fused_3d_consistency,
-        ) = model(xyzi, c_coord, p_coord, xyzi_raw, c_coord_raw, p_coord_raw, label)
+    for i, (xyzi, c_coord, p_coord, label, c_label, _) in pbar:
+        loss, l_3d, l_2d = model(xyzi, c_coord, p_coord, label, c_label)
 
         optimizer.zero_grad()
         loss.backward()
@@ -180,9 +217,8 @@ def train(epoch, end_epoch, args, model, train_loader, optimizer, scheduler, log
 
         reduced_losses = {
             "total_loss": reduce_tensor(loss),
-            "l_fused_3d": reduce_tensor(l_fused_3d),
-            "l_fused_3d_raw": reduce_tensor(l_fused_3d_raw),
-            "l_fused_3d_consistency": reduce_tensor(l_fused_3d_consistency),
+            "loss_3d": reduce_tensor(l_3d),
+            "loss_2d": reduce_tensor(l_2d),
         }
 
         if rank == 0:
@@ -210,15 +246,12 @@ def train(epoch, end_epoch, args, model, train_loader, optimizer, scheduler, log
 
 
 def main(args, config):
-    ################################################################################################################
     pGen, pDataset, pModel, pOpt = config.get_config()
     prefix = pGen.name
     save_path = os.path.join("experiments", prefix)
     model_prefix = os.path.join(save_path, "checkpoint")
     os.system("mkdir -p {}".format(model_prefix))
-    ################################################################################################################
 
-    ################################################################################################################
     config_logger(os.path.join(save_path, "train_log.txt"))
     logger = logging.getLogger()
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -231,27 +264,28 @@ def main(args, config):
     if rank == 0:
         log_dir = get_next_case_path(os.path.join(save_path, "logs"), tags=[])
         writer = SummaryWriter(log_dir=log_dir)
-    ################################################################################################################
 
-    ################################################################################################################
     seed = rank * pDataset.Train.num_workers + 50051
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    ################################################################################################################
 
-    ################################################################################################################
     train_loader, val_loader, train_sampler = get_dataloaders(pDataset=pDataset, pGen=pGen)
     base_net, model, optimizer, scheduler = get_networks_optimizer_scheduler(
-        pModel=pModel, pOpt=pOpt, train_loader=train_loader, device=device, local_rank=local_rank
+        pModel=pModel,
+        pOpt=pOpt,
+        train_loader=train_loader,
+        device=device,
+        local_rank=local_rank,
     )
     start_epoch = set_starting_condition(
         args, model_prefix, pModel, pOpt, base_net, optimizer, scheduler, rank, logger
     )
-    ################################################################################################################
 
     try:
+        logger.info("*****************************")
+        logger.info(f"학습 시작 시각 : {datetime.datetime.now()}")
         for epoch in range(start_epoch, pOpt.schedule.end_epoch):
             model.train()
             train_sampler.set_epoch(epoch)
@@ -283,6 +317,7 @@ def main(args, config):
                 writer,
                 rank,
             )
+        logger.info(f"학습 종료 : {datetime.datetime.now()}")
 
     except KeyboardInterrupt:
         print("Graceful Shutdown...")

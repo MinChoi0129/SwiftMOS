@@ -2,7 +2,7 @@ def get_config():
     class General:
         log_frequency = 100
         name = __name__.rsplit("/")[-1].rsplit(".")[-1]
-        batch_size_per_gpu = 3
+        batch_size_per_gpu = 2
         fp16 = False
 
         SeqDir = "/home/workspace/KITTI/dataset/sequences"
@@ -19,10 +19,10 @@ def get_config():
             cart_bev_range_z = (-4.0, 2.0)
 
             # Polar-BEV
-            polar_bev_shape = (512, 512, 30)
-            polar_bev_range_r = (2, 50)
-            polar_bev_range_theta = (-180, 180)
             polar_bev_range_z = (-4.0, 2.0)
+            polar_bev_shape = (64, 2048)
+            polar_bev_range_r = (0, 50)
+            polar_bev_range_phi = (-180, 180)
 
     class DatasetParam:
         class Train:
@@ -89,7 +89,7 @@ def get_config():
         class schedule:
             type = "step"
             begin_epoch = 0
-            end_epoch = 50
+            end_epoch = 60
             pct_start = 0.01
             final_lr = 1e-6
             step = 10
