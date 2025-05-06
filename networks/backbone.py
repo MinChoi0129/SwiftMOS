@@ -389,7 +389,6 @@ class BranchAttFusion(nn.Module):
             self.feat_model.append(PointNet(cin=in_channel, cout=out_channel, pre_bn=False))
 
     def forward(self, *x_list):
-        # pdb.set_trace()
         weights = F.softmax(self.weights, dim=0)
         x_out = self.feat_model[0](x_list[0]) * weights[0]
         for i in range(1, len(x_list)):
@@ -420,7 +419,6 @@ class CatFusion(nn.Module):
         )
 
     def forward(self, *x_list):
-        # pdb.set_trace()
         x_merge = torch.cat(x_list, dim=1)
         x_merge = F.dropout(x_merge, p=0.2, training=self.training, inplace=False)
         x_out = self.merge_layer(x_merge)
@@ -454,7 +452,6 @@ class PointAttFusion(nn.Module):
             self.feat_model.append(PointNet(cin=in_channel, cout=out_channel, pre_bn=False))
 
     def forward(self, *x_list):
-        # pdb.set_trace()
         batch_size = x_list[0].shape[0]
 
         x_feat_list = [self.feat_model[i](x_list[i]) for i in range(len(x_list))]

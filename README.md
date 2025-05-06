@@ -1,7 +1,8 @@
-# **TripleMOS: Moving Object Segmentation based on Multiple Coordinate Systems**
+# **GNU MOS: Multi-View Moving Object Segmentation**
 
-Official code for TripleMOS
+Official code for GNU MOS
 
+GNU stands for 'Gyeongsang National University'.
 
 ### 1. Basic Environment
 
@@ -9,7 +10,7 @@ We recommend to use the docker hub's PyTorch-Cuda image.
 ```bash
 $ docker pull pytorch/pytorch:1.9.1-cuda11.1-cudnn8-devel
 
-$ export DISPLAY=***.***.***.***:0 (* should be your IP address.)
+$ export DISPLAY=***.***.***.***:0 (* : your IP address for visualization)
 $ xhost +
 $ docker run -it \
     -e DISPLAY=$DISPLAY \
@@ -17,7 +18,7 @@ $ docker run -it \
     -v (path to KITTI dataset in local):(path to KITTI dataset to set in container)
     -v /dev:/dev:ro \
     --privileged \
-    --name TripleMOS \
+    --name GNU_MOS \
     --ipc=host \
     --gpus all \
     pytorch/pytorch:1.9.1-cuda11.1-cudnn8-devel \
@@ -30,20 +31,22 @@ $ apt-get update -y
 $ apt install -y git vim unzip wget vim git dpkg build-essential
 $ apt-get install -y libgl1-mesa-glx libglib2.0-0 libxcb-cursor0 x11-apps
 
-$ conda create -n triple python=3.8
-$ conda activate triple
+$ conda create -n gnumos python=3.8
+$ conda activate gnumos
 ```
 
 ### 2. Clone and Install Python Packages
 
 ##### 2.1 Clone Repository
 ```bash
-git clone https://github.com/MinChoi0129/TripleMOS.git
-cd TripleMOS
+git clone https://github.com/MinChoi0129/GNU_MOS.git
+cd GNU_MOS
 ```
 
 ##### 2.2 Install more packages
 ```bash
+pip install torch==1.9.1+cu111 torchvision==0.10.1+cu111 torchaudio==0.9.1 -f https://download.pytorch.org/whl/torch_stable.html
+
 pip install -r requirements.txt
 
 cd deep_point
@@ -91,25 +94,17 @@ ROOT_to_Object_Bank
 
 ### 4. Edit Configuration
 
-In `config/config_TripleMOS.py`
+In `config/config_MOS.py`
 * Fill `batch_size_per_gpu` according to your computing resources.
 * The SemanticKITTI's `sequence` path should be filled in `SeqDir`(Recommend Absolute Path)
 * The path of `Object Bank` should be filled in `ObjBackDir`(Recommend Absolute Path)
 
-In `scripts/eval_for_paper.sh`
-* Change All `*Path` properly to fit your environment.(Should be Absolute Path)
-
 In `scripts/train_multi_gpu.sh`
 * Fill `CUDA_VISIBLE_DEVICES` and `NumGPUs` according to your computing resources.
-* Warning : Number of gpus should be same with the length of exported env variable(CUDA_VISIBLE_DEVICES)
+* Note : Number of gpus should be same with the length of exported env variable(CUDA_VISIBLE_DEVICES)
 
 ### 5 Training / Evaluating / Inference Speed
 
-After every single epoch in the training session, you can check the various metrics like Moving IOU about validation sequence(08).
-
-But, the evaluation process in training session, TripleMOS doesn't save the prediction labels for fast training time(No R/W).
-
-If you want to save the label, you can just run the `5.2 Evaluation Process`.
 
 ##### 5.1 Training Session
 
@@ -117,10 +112,14 @@ If you want to save the label, you can just run the `5.2 Evaluation Process`.
 bash scripts/train_multi_gpu.sh
 ```
 
+After every single epoch in the training session, you can see metrics like Moving IoU for validation sequence (08). But, the evaluation process in training session doesn't save the prediction labels for fast training time.
+
+If you want to save the label, you can just run the `5.2 Evaluation Process` below.
+
 ##### 5.2 Evaluate Process(save prediction labels)
 
 ```bash
-bash scripts/validate_multi_gpu_save_label.sh
+bash scripts/validate_save_label.sh
 bash eval_for_paper.sh
 ```
 

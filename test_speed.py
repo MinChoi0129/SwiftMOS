@@ -1,27 +1,16 @@
 import os
-import random
 import warnings
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import argparse
 import time
-import pdb
-
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
-
-import datasets
-
-from utils.metric import MultiClassMetric
-from models import *
-
 import tqdm
 import importlib
 import torch.backends.cudnn as cudnn
+import datasets
+from networks import MainNetwork
 
-from utils.pretty_print import shprint
 
 cudnn.benchmark = True
 cudnn.enabled = True
@@ -36,38 +25,38 @@ def main(args, config):
     model_prefix = os.path.join(save_path, "checkpoint")
 
     # define dataloader
-    val_dataset = eval("datasets.{}.DataloadVal".format(pDataset.Val.data_src))(pDataset.Val)
+    val_dataset = datasets.data_MOS.DataloadVal(pDataset.Val)
     val_loader = DataLoader(val_dataset, batch_size=1, num_workers=4)
     val_loader = iter(val_loader)
 
     # define model
-    model = eval(pModel.prefix)(pModel)
+    model = MainNetwork.MOSNet(pModel)
     model.eval()
     model.cuda()
 
     (
         xyzi,  # [1, 3, 7, 160000, 1]
-        c_coord,  # [1, 3, 160000, 3, 1]
-        p_coord,  # [1, 3, 160000, 3, 1]
+        descartes_coord,  # [1, 3, 160000, 3, 1]
+        cylinder_coord,  # [1, 3, 160000, 2, 1]
         label,  # [1, 160000, 1]
-        c_label,  # [1, 256, 256, 1]
+        descartes_label,  # [1, 256, 256, 1]
         valid_mask_list,
         pad_length_list,
         meta_list_raw,
     ) = val_loader.next()
 
     xyzi = xyzi.cuda()
-    c_coord = c_coord.cuda()
-    p_coord = p_coord.cuda()
+    descartes_coord = descartes_coord.cuda()
+    cylinder_coord = cylinder_coord.cuda()
     label = label.cuda()
-    c_label = c_label.cuda()
+    descartes_label = descartes_label.cuda()
 
-    pred_cls, deep_64 = model.infer(xyzi, c_coord, p_coord, None)
+    pred_cls, deep_128 = model.infer(xyzi, descartes_coord, cylinder_coord, None)
     time_cost = []
     with torch.no_grad():
         for i in tqdm.tqdm(range(1000)):
             start = time.time()
-            pred_cls, deep_64 = model.infer(xyzi, c_coord, p_coord, deep_64)
+            pred_cls, deep_128 = model.infer(xyzi, descartes_coord, cylinder_coord, deep_128)
             torch.cuda.synchronize()
             end = time.time()
             print((end - start) * 1000, "ms")

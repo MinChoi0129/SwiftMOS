@@ -35,7 +35,6 @@ class MultiClassMetric:
             pred_tmp = (pred_map == (i + 1)).astype(np.float32)
             gt_tmp = (gt_map == (i + 1)).astype(np.float32)
 
-            # pdb.set_trace()
             tp = (pred_tmp * gt_tmp).sum()
             pred_num = pred_tmp.sum()
             gt_num = gt_tmp.sum()

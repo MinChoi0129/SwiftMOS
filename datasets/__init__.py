@@ -1,1 +1,1 @@
-from . import data_TripleMOS
+from . import data_MOS

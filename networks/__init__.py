@@ -1,1 +1,1 @@
-from . import backbone, bird_view
+from . import backbone, multi_view_network

@@ -1,10 +1,6 @@
 import numpy as np
 import random
-
 import cv2
-import json
-import os
-
 from scipy.spatial import Delaunay
 
 
@@ -274,9 +270,7 @@ class DataAugment:
          pcds: (N, C)
         """
         # random noise
-        xyz_noise = np.random.normal(
-            self.noise_mean, self.noise_std, size=(pcds.shape[0], 3)
-        )
+        xyz_noise = np.random.normal(self.noise_mean, self.noise_std, size=(pcds.shape[0], 3))
         pcds[:, :3] = pcds[:, :3] + xyz_noise
 
         # random shift

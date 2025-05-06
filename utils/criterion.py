@@ -21,7 +21,6 @@ class CE_OHEM(nn.Module):
         self.loss_func = nn.CrossEntropyLoss(weight=self.weight, reduce=False, ignore_index=self.ignore_index)
 
     def forward(self, pred, gt):
-        # pdb.set_trace()
         loss_mat = self.loss_func(pred, gt.long())
 
         loss = loss_mat.view(1, -1)
@@ -38,7 +37,6 @@ class BCE_OHEM(nn.Module):
         self.top_weight = top_weight
 
     def forward(self, pred, gt):
-        # pdb.set_trace()
         loss_mat = -1 * (gt * torch.log(pred + 1e-12) + (1 - gt) * torch.log(1 - pred + 1e-12))
 
         loss = loss_mat.view(1, -1)
