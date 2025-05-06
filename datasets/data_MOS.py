@@ -190,10 +190,18 @@ class DataloadTrain(Dataset):
             size=self.Voxel.descartes_shape,
         )
 
-        pcds_cylinder_coord = utils.CylinderQuantize(
+        # pcds_cylinder_coord = utils.CylinderQuantize(
+        #     pcds_xyzi,
+        #     phi_range=self.Voxel.range_phi,
+        #     range_z=self.Voxel.range_z,
+        #     size=self.Voxel.cylinder_shape,
+        # )
+
+        # 임시
+        pcds_cylinder_coord = utils.SphereQuantize(
             pcds_xyzi,
             phi_range=self.Voxel.range_phi,
-            range_z=self.Voxel.range_z,
+            theta_range=(-25.0, 3.0),
             size=self.Voxel.cylinder_shape,
         )
 
@@ -392,10 +400,18 @@ class DataloadVal(Dataset):
             size=self.Voxel.descartes_shape,
         )
 
-        pcds_cylinder_coord = utils.CylinderQuantize(
+        # pcds_cylinder_coord = utils.CylinderQuantize(
+        #     pcds_xyzi,
+        #     phi_range=self.Voxel.range_phi,
+        #     range_z=self.Voxel.range_z,
+        #     size=self.Voxel.cylinder_shape,
+        # )
+
+        # 임시
+        pcds_cylinder_coord = utils.SphereQuantize(
             pcds_xyzi,
             phi_range=self.Voxel.range_phi,
-            range_z=self.Voxel.range_z,
+            theta_range=(-25.0, 3.0),
             size=self.Voxel.cylinder_shape,
         )
 

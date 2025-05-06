@@ -5,7 +5,7 @@ CheckpointModelEpoch=40
 
 export CUDA_VISIBLE_DEVICES=0
 
-python3 evaluate.py \
+python3 GNU_MOS_evaluate.py \
     --config $ConfigPath \
     --model_epoch $CheckpointModelEpoch \
     --save_label

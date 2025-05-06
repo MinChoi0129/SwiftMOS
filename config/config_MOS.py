@@ -21,7 +21,7 @@ def get_config():
 
     class DatasetParam:
         class Train:
-            num_workers = 3
+            num_workers = 4
             frame_point_num = 160000
             SeqDir = General.SeqDir
             Voxel = General.Voxel

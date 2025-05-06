@@ -1,6 +1,6 @@
 import torch, argparse, random, sys, traceback, warnings, logging, tqdm, importlib, os
 import numpy as np
-from evaluate import val
+from GNU_MOS_evaluate import val
 from networks import MainNetwork
 from utils.logger import config_logger
 from torch.utils.tensorboard import SummaryWriter
@@ -135,7 +135,8 @@ def main(args, config):
     )
 
     try:
-        logger.info("*" * 80)
+        if rank == 0:
+            logger.info("*" * 80)
         for epoch in range(start_epoch, pOpt.schedule.end_epoch):
             model.train()
             train_sampler.set_epoch(epoch)
