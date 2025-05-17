@@ -2,7 +2,7 @@ def get_config():
     class General:
         log_frequency = 100
         name = __name__.rsplit("/")[-1].rsplit(".")[-1]
-        batch_size_per_gpu = 3
+        batch_size_per_gpu = 2
 
         SeqDir = "/home/workspace/KITTI/dataset/sequences"
         category_list = ["static", "moving"]
@@ -11,17 +11,23 @@ def get_config():
         K = 2
 
         class Voxel:
-            descartes_shape = (512, 512, 30)
-            cylinder_shape = (64, 2048)
+            # 해상도
+            descartes_shape = (512, 512, 6)
+            sphere_shape = (64, 2048, 48)
+
+            # 데이터 범위(Cartesian)
             range_x = (-50.0, 50.0)
             range_y = (-50.0, 50.0)
             range_z = (-4.0, 2.0)
-            range_r = (0, 50)
+
+            # 데이터 범위(Polar, Sphere, Cylinder 등)
+            range_r = (2, 50)
             range_phi = (-180, 180)
+            range_theta = (-25.0, 3.0)
 
     class DatasetParam:
         class Train:
-            num_workers = 4
+            num_workers = 2
             frame_point_num = 160000
             SeqDir = General.SeqDir
             Voxel = General.Voxel
@@ -68,7 +74,7 @@ def get_config():
             rv_grid2point = dict(type="BilinearSample", scale_rate=(1.0, 0.5))
 
         class pretrain:
-            pretrain_epoch = 9  # 이 숫자까지 학습했다고 가정함. 즉 +1 한 Epoch을 이어서 시작할 것임.
+            pretrain_epoch = 46  # 이 숫자까지 학습했다고 가정함. 즉 +1 한 Epoch을 이어서 시작할 것임.
 
     class OptimizeParam:
         class optimizer:
@@ -81,7 +87,7 @@ def get_config():
         class schedule:
             type = "step"
             begin_epoch = 0
-            end_epoch = 60
+            end_epoch = 50
             pct_start = 0.01
             final_lr = 1e-6
             step = 10

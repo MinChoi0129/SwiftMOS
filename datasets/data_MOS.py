@@ -190,19 +190,12 @@ class DataloadTrain(Dataset):
             size=self.Voxel.descartes_shape,
         )
 
-        # pcds_cylinder_coord = utils.CylinderQuantize(
-        #     pcds_xyzi,
-        #     phi_range=self.Voxel.range_phi,
-        #     range_z=self.Voxel.range_z,
-        #     size=self.Voxel.cylinder_shape,
-        # )
-
-        # 임시
-        pcds_cylinder_coord = utils.SphereQuantize(
+        pcds_sphere_coord = utils.SphereQuantize(
             pcds_xyzi,
             phi_range=self.Voxel.range_phi,
-            theta_range=(-25.0, 3.0),
-            size=self.Voxel.cylinder_shape,
+            theta_range=self.Voxel.range_theta,
+            r_range=self.Voxel.range_r,
+            size=self.Voxel.sphere_shape,
         )
 
         # make feature
@@ -213,11 +206,9 @@ class DataloadTrain(Dataset):
         pcds_descartes_coord = torch.FloatTensor(pcds_descartes_coord.astype(np.float32)).view(
             self.config.seq_num, N, -1, 1
         )
-        pcds_cylinder_coord = torch.FloatTensor(pcds_cylinder_coord.astype(np.float32)).view(
-            self.config.seq_num, N, -1, 1
-        )
+        pcds_sphere_coord = torch.FloatTensor(pcds_sphere_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
 
-        return pcds_xyzi, pcds_descartes_coord, pcds_cylinder_coord
+        return pcds_xyzi, pcds_descartes_coord, pcds_sphere_coord
 
     def form_seq(self, meta_list):
         pc_list = []
@@ -248,9 +239,9 @@ class DataloadTrain(Dataset):
     def __getitem__(self, index):
         xyzi_stages = []
         descartes_coord_stages = []
-        cylinder_coord_stages = []
+        sphere_coord_stages = []
         label_stages = []
-        descartes_label_stages = []
+        bev_label_stages = []
         meta_list_raw_stages = []
 
         for idx in [index, index - 1, index - 2]:
@@ -290,30 +281,30 @@ class DataloadTrain(Dataset):
             pc_list = np.concatenate(pc_list, axis=0)
 
             # [3, 7, 160000, 1], [3, 160000, 3, 1], [3, 160000, 2, 1]
-            xyzi, descartes_coord, cylinder_coord = self.form_batch(pc_list.copy())
+            xyzi, descartes_coord, sphere_coord = self.form_batch(pc_list.copy())
             label = torch.LongTensor(pc_label_list[0].astype(np.long)).unsqueeze(-1)
-            descartes_label = generate_bev_labels(descartes_coord, label)
+            bev_label = generate_bev_labels(descartes_coord, label)
 
             xyzi_stages.append(xyzi)
             descartes_coord_stages.append(descartes_coord)
-            cylinder_coord_stages.append(cylinder_coord)
+            sphere_coord_stages.append(sphere_coord)
             label_stages.append(label)
-            descartes_label_stages.append(descartes_label)
+            bev_label_stages.append(bev_label)
             meta_list_raw_stages.append(meta_list_raw)
 
         xyzi_stages = torch.stack(xyzi_stages, dim=0)
         descartes_coord_stages = torch.stack(descartes_coord_stages, dim=0)
-        cylinder_coord_stages = torch.stack(cylinder_coord_stages, dim=0)
+        sphere_coord_stages = torch.stack(sphere_coord_stages, dim=0)
         label_stages = torch.stack(label_stages, dim=0)
-        descartes_label_stages = torch.stack(descartes_label_stages, dim=0)
+        bev_label_stages = torch.stack(bev_label_stages, dim=0)
         meta_list_raw_stages = meta_list_raw_stages[0]
 
         return (
             xyzi_stages,  # [Stage, 3, 7, 160000, 1]
             descartes_coord_stages,  # [Stage, 3, 160000, 3, 1]
-            cylinder_coord_stages,  # [Stage, 3, 160000, 2, 1]
+            sphere_coord_stages,  # [Stage, 3, 160000, 2, 1]
             label_stages,  # [Stage, 160000, 1]
-            descartes_label_stages,  # [Stage, 256, 256, 1]
+            bev_label_stages,  # [Stage, 256, 256, 1]
             meta_list_raw_stages,
         )
 
@@ -400,19 +391,12 @@ class DataloadVal(Dataset):
             size=self.Voxel.descartes_shape,
         )
 
-        # pcds_cylinder_coord = utils.CylinderQuantize(
-        #     pcds_xyzi,
-        #     phi_range=self.Voxel.range_phi,
-        #     range_z=self.Voxel.range_z,
-        #     size=self.Voxel.cylinder_shape,
-        # )
-
-        # 임시
-        pcds_cylinder_coord = utils.SphereQuantize(
+        pcds_sphere_coord = utils.SphereQuantize(
             pcds_xyzi,
             phi_range=self.Voxel.range_phi,
-            theta_range=(-25.0, 3.0),
-            size=self.Voxel.cylinder_shape,
+            theta_range=self.Voxel.range_theta,
+            r_range=self.Voxel.range_r,
+            size=self.Voxel.sphere_shape,
         )
 
         # make feature
@@ -423,11 +407,9 @@ class DataloadVal(Dataset):
         pcds_descartes_coord = torch.FloatTensor(pcds_descartes_coord.astype(np.float32)).view(
             self.config.seq_num, N, -1, 1
         )
-        pcds_cylinder_coord = torch.FloatTensor(pcds_cylinder_coord.astype(np.float32)).view(
-            self.config.seq_num, N, -1, 1
-        )
+        pcds_sphere_coord = torch.FloatTensor(pcds_sphere_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
 
-        return pcds_xyzi, pcds_descartes_coord, pcds_cylinder_coord
+        return pcds_xyzi, pcds_descartes_coord, pcds_sphere_coord
 
     def form_seq(self, meta_list):
         pc_list = []
@@ -484,15 +466,15 @@ class DataloadVal(Dataset):
         pc_list = np.concatenate(pc_list, axis=0)
         label = torch.LongTensor(pc_label_list[0].astype(np.long)).unsqueeze(-1)
 
-        xyzi, descartes_coord, cylinder_coord = self.form_batch(pc_list.copy())
-        descartes_label = generate_bev_labels(descartes_coord, label)
+        xyzi, descartes_coord, sphere_coord = self.form_batch(pc_list.copy())
+        bev_label = generate_bev_labels(descartes_coord, label)
 
         return (
             xyzi,  # [3, 7, 160000, 1]
             descartes_coord,  # [3, 160000, 3, 1]
-            cylinder_coord,  # [3, 160000, 2, 1]
+            sphere_coord,  # [3, 160000, 2, 1]
             label,  # [160000, 1]
-            descartes_label,  # [256, 256, 1]
+            bev_label,  # [256, 256, 1]
             valid_mask_list,
             pad_length_list,
             meta_list_raw,

@@ -1,32 +1,38 @@
-import logging
+import logging, sys
 from datetime import datetime
 from pytz import utc, timezone
 
 
-def config_logger(path):
-    def custom_time(*args):
-        utc_dt = utc.localize(datetime.utcnow())
-        my_tz = timezone("Asia/Shanghai")
-        converted = utc_dt.astimezone(my_tz)
-        return converted.timetuple()
+def config_logger(path: str, is_master: bool = True):
+    """멀티-GPU 분산 학습용 로거 설정"""
 
-    logging.basicConfig()
-    logging.getLogger().handlers.pop()
+    def _seoul_time(*args):
+        return utc.localize(datetime.utcnow()).astimezone(timezone("Asia/Seoul")).timetuple()
 
-    fmt = "%(asctime)s %(message)s"
-    date_fmt = "%m-%d %H:%M:%S"
-    formatter = logging.Formatter(fmt=fmt, datefmt=date_fmt)
-    formatter.converter = custom_time
+    fmt = "%(asctime)s │ %(levelname)s │ %(message)s"
+    datefmt = "%m-%d %H:%M:%S"
 
-    logging.getLogger().setLevel(logging.INFO)
+    # force=True 로 모든 이전 핸들러 제거
+    if is_master:
+        logging.basicConfig(
+            level=logging.INFO,
+            format=fmt,
+            datefmt=datefmt,
+            handlers=[
+                logging.FileHandler(path, mode="a"),  # ← ★ append
+                logging.StreamHandler(sys.stdout),
+            ],
+            force=True,
+        )
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format=fmt,
+            datefmt=datefmt,
+            handlers=[logging.StreamHandler(sys.stdout)],
+            force=True,
+        )
 
-    log_file_save_name = path
-    file_handler = logging.FileHandler(filename=log_file_save_name, mode="w")
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(formatter)
-    logging.getLogger().addHandler(file_handler)
-
-    console = logging.StreamHandler()
-    console.setLevel(logging.INFO)
-    console.setFormatter(formatter)
-    logging.getLogger().addHandler(console)
+    for h in logging.getLogger().handlers:
+        h.setFormatter(logging.Formatter(fmt, datefmt))
+        h.formatter.converter = _seoul_time

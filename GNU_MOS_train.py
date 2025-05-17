@@ -35,7 +35,9 @@ def save_checkpoint_and_eval_using_it(
     if epoch >= args.start_validating_epoch:
         if epoch <= 10 and epoch in [0, 2, 9]:
             run_EVAL = True
-        elif epoch % 10 in [4, 9]:
+        elif epoch < 40 and epoch % 10 in [4, 9]:
+            run_EVAL = True
+        elif epoch % 10 in [0, 2, 4, 6, 8]:
             run_EVAL = True
 
     if run_EVAL:
@@ -62,8 +64,8 @@ def train_one_epoch(epoch, end_epoch, model, train_loader, optimizer, scheduler,
         else enumerate(train_loader)
     )
 
-    for i, (xyzi, descartes_coord, cylinder_coord, label, descartes_label, _) in pbar:
-        loss, l_3d, l_2d = model(xyzi, descartes_coord, cylinder_coord, label, descartes_label)
+    for i, (xyzi, descartes_coord, sphere_coord, label, bev_label, meta_list_raw) in pbar:
+        loss, loss_2d, loss_3d = model(xyzi, descartes_coord, sphere_coord, label, bev_label)
 
         optimizer.zero_grad()
         loss.backward()
@@ -72,8 +74,8 @@ def train_one_epoch(epoch, end_epoch, model, train_loader, optimizer, scheduler,
 
         reduced_losses = {
             "total_loss": reduce_tensor(loss),
-            "loss_3d": reduce_tensor(l_3d),
-            "loss_2d": reduce_tensor(l_2d),
+            "loss_2d": reduce_tensor(loss_2d),
+            "loss_3d": reduce_tensor(loss_3d),
         }
 
         if rank == 0:
@@ -101,42 +103,61 @@ def train_one_epoch(epoch, end_epoch, model, train_loader, optimizer, scheduler,
 
 
 def main(args, config):
+    # 설정 파일 불러오기
     pGen, pDataset, pModel, pOpt = config.get_config()
     prefix = pGen.name
+
+    # 저장 경로 생성
     save_path = os.path.join("experiments", prefix)
     model_prefix = os.path.join(save_path, "checkpoint")
     os.system("mkdir -p {}".format(model_prefix))
 
-    config_logger(os.path.join(save_path, "train_log.txt"))
-    logger = logging.getLogger()
+    # 분산 처리 설정
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     device = torch.device("cuda:{}".format(local_rank))
     torch.cuda.set_device(local_rank)
     torch.distributed.init_process_group(backend="nccl", init_method="env://")
     world_size = torch.distributed.get_world_size()
     rank = torch.distributed.get_rank()
-    writer = None
-    if rank == 0:
-        log_dir = get_next_case_path(os.path.join(save_path, "logs"), tags=[])
-        writer = SummaryWriter(log_dir=log_dir)
 
-    seed = rank * pDataset.Train.num_workers + 50051
+    # 랜덤 시드 설정
+    seed = 42
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+    # 로그 파일 생성
+    log_path = os.path.join(save_path, "train_log.txt")
+    config_logger(log_path, is_master=(rank == 0))
+    logger = logging.getLogger(__name__)  # 모든 rank 에서 동일
+
+    # 데이터로더 설정
     train_loader, val_loader, train_sampler = get_dataloaders(pDataset=pDataset, pGen=pGen)
+
+    # 네트워크, 최적화, 스케줄러 설정
     base_net, model, optimizer, scheduler = get_networks_optimizer_scheduler(
         pModel=pModel, pOpt=pOpt, train_loader=train_loader, device=device, local_rank=local_rank
     )
+
+    # 텐서보드 설정
+    writer = None
+    if rank == 0:
+        log_dir = get_next_case_path(os.path.join(save_path, "logs"), tags=[])
+        writer = SummaryWriter(log_dir=log_dir)
+        logger.info("*" * 80)
+        logger.info(
+            "Total trainable parameters: " + str(sum(p.numel() for p in model.parameters() if p.requires_grad))
+        )
+
+    # 시작 에포크 설정
     start_epoch = set_starting_condition(
         args, model_prefix, pModel, pOpt, base_net, optimizer, scheduler, rank, logger
     )
 
+    # ***************************************************************************************************** #
+
     try:
-        if rank == 0:
-            logger.info("*" * 80)
         for epoch in range(start_epoch, pOpt.schedule.end_epoch):
             model.train()
             train_sampler.set_epoch(epoch)

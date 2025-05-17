@@ -37,9 +37,9 @@ def main(args, config):
     (
         xyzi,  # [1, 3, 7, 160000, 1]
         descartes_coord,  # [1, 3, 160000, 3, 1]
-        cylinder_coord,  # [1, 3, 160000, 2, 1]
+        sphere_coord,  # [1, 3, 160000, 2, 1]
         label,  # [1, 160000, 1]
-        descartes_label,  # [1, 256, 256, 1]
+        bev_label,  # [1, 256, 256, 1]
         valid_mask_list,
         pad_length_list,
         meta_list_raw,
@@ -47,16 +47,16 @@ def main(args, config):
 
     xyzi = xyzi.cuda()
     descartes_coord = descartes_coord.cuda()
-    cylinder_coord = cylinder_coord.cuda()
+    sphere_coord = sphere_coord.cuda()
     label = label.cuda()
-    descartes_label = descartes_label.cuda()
+    bev_label = bev_label.cuda()
 
-    pred_cls, deep_128 = model.infer(xyzi, descartes_coord, cylinder_coord, None)
+    pred_cls, deep_128_res = model.infer(xyzi, descartes_coord, sphere_coord, None)
     time_cost = []
     with torch.no_grad():
         for i in tqdm.tqdm(range(1000)):
             start = time.time()
-            pred_cls, deep_128 = model.infer(xyzi, descartes_coord, cylinder_coord, deep_128)
+            pred_cls, deep_128_res = model.infer(xyzi, descartes_coord, sphere_coord, deep_128_res)
             torch.cuda.synchronize()
             end = time.time()
             print((end - start) * 1000, "ms")

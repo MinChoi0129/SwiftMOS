@@ -145,19 +145,8 @@ def recolor(pcds_labels, color_map):
 ##############################################################################################
 
 
-def PolarQuantize(
-    pcds,
-    range_phi=(-180.0, 180.0),  # degree
-    range_r=(0.0, 50.0),  # metre
-    size=(64, 2048),
-):  # (radial, angular)
-    """
-    pcds           : (N,3) xyz
-    range_phi_deg  : (deg_min, deg_max)
-    range_r        : (r_min, r_max)
-    size           : (n_r, n_phi)  → (세로, 가로) = (64, 2048)
-    return         : (N,2)  (r_idx, phi_idx)  float32
-    """
+def PolarQuantize(pcds, range_phi, range_r, size):
+
     # 1) xyz → polar
     x, y = pcds[:, 0], pcds[:, 1]
     theta_rad = np.arctan2(y, x)  # [-π, π] rad
@@ -201,30 +190,72 @@ def Quantize(pcds, range_x, range_y, range_z, size):
     return pcds_quan
 
 
-def SphereQuantize(pcds, phi_range, theta_range, size):
-    H = size[0]
-    W = size[1]
+# def SphereQuantize(pcds, phi_range, theta_range, size):
+#     H = size[0]
+#     W = size[1]
 
-    phi_range_radian = (phi_range[0] * np.pi / 180.0, phi_range[1] * np.pi / 180.0)
-    theta_range_radian = (
-        theta_range[0] * np.pi / 180.0,
-        theta_range[1] * np.pi / 180.0,
-    )
+#     phi_range_radian = (phi_range[0] * np.pi / 180.0, phi_range[1] * np.pi / 180.0)
+#     theta_range_radian = (
+#         theta_range[0] * np.pi / 180.0,
+#         theta_range[1] * np.pi / 180.0,
+#     )
 
-    dphi = (phi_range_radian[1] - phi_range_radian[0]) / W
-    dtheta = (theta_range_radian[1] - theta_range_radian[0]) / H
+#     dphi = (phi_range_radian[1] - phi_range_radian[0]) / W
+#     dtheta = (theta_range_radian[1] - theta_range_radian[0]) / H
+
+#     x, y, z = pcds[:, 0], pcds[:, 1], pcds[:, 2]
+#     d = np.sqrt(x**2 + y**2 + z**2) + 1e-12
+
+#     phi = phi_range_radian[1] - np.arctan2(x, y)
+#     phi_quan = phi / dphi
+
+#     theta = theta_range_radian[1] - np.arcsin(z / d)
+#     theta_quan = theta / dtheta
+
+#     sphere_coords = np.stack((theta_quan, phi_quan), axis=-1)
+#     return sphere_coords
+
+
+def SphereQuantize(
+    pcds, phi_range, theta_range, r_range, size  # (deg_min, deg_max)  # (deg_min, deg_max)  # (m_min , m_max)
+):  # (H_theta, W_phi, D_r)
+    """
+    RV(θ, φ, r) 양자화  → (θ_idx, φ_idx, r_idx)
+
+    Args
+    ----
+    pcds        : (N, 3)  – (x, y, z) 점 좌표 [m]
+    phi_range   : 방위각 범위 [deg]
+    theta_range : 고도각 범위 [deg]
+    r_range     : 거리  범위 [m]
+    size        : (H, W, D)  – θ, φ, r 축 bin 수
+
+    Returns
+    -------
+    sphere_coords : (N, 3) – 양자화된 (θ_idx, φ_idx, r_idx)
+    """
+    H, W, D = size
+    # ① 각도·거리 단위 변환
+    phi_min, phi_max = np.deg2rad(phi_range)
+    theta_min, theta_max = np.deg2rad(theta_range)
+    r_min, r_max = r_range
+
+    dphi = (phi_max - phi_min) / W
+    dtheta = (theta_max - theta_min) / H
+    dr = (r_max - r_min) / D
 
     x, y, z = pcds[:, 0], pcds[:, 1], pcds[:, 2]
-    d = np.sqrt(x**2 + y**2 + z**2) + 1e-12
+    r = np.sqrt(x**2 + y**2 + z**2) + 1e-12
 
-    phi = phi_range_radian[1] - np.arctan2(x, y)
-    phi_quan = phi / dphi
+    # ② φ, θ, r 양자화
+    phi = phi_max - np.arctan2(x, y)  # [0 , 2π]
+    theta = theta_max - np.arcsin(z / r)  # [0 , θ_span]
 
-    theta = theta_range_radian[1] - np.arcsin(z / d)
-    theta_quan = theta / dtheta
+    phi_quan = (phi - phi_min) / dphi
+    theta_quan = (theta - theta_min) / dtheta
+    r_quan = (r - r_min) / dr
 
-    sphere_coords = np.stack((theta_quan, phi_quan), axis=-1)
-    return sphere_coords
+    return np.stack((theta_quan, phi_quan, r_quan), axis=-1)
 
 
 def CylinderQuantize(pcds, phi_range, range_z, size):
