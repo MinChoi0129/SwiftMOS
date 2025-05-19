@@ -131,40 +131,32 @@ class MOSNet(nn.Module):
     def stage_forward(self, xyzi, descartes_coord, sphere_coord, deep_128_res):
         """
         xyzi: (BS, 3, 7, 160000, 1)
-        descartes_coord: (BS, 3, 160000, 3, 1) 3: x, y, z
-        sphere_coord: (BS, 3, 160000, 3, 1) 2: theta, phi, r
+        descartes_coord: (BS, 3, 160000, 3(x, y, z), 1)
+        sphere_coord: (BS, 3, 160000, 3(theta, phi, r), 1)
         deep_128_res: (BS, 128, 64, 64)
         """
         BS, T, C, N, _ = xyzi.shape
 
-        # PointNet
-        point_feats = self.point_pre(xyzi.view(BS * T, C, N, 1))  # (BS×3, 64, 160000, 1)
-
-        ind_descartes = descartes_coord.view(BS * T, N, 3, 1)[:, :, :2]
-        ind_sphere = sphere_coord.view(BS * T, N, 3, 1)[:, :, :2]
-
-        # Z/R값 투영 (B,1,H_each,W_each)
-        z_val = descartes_coord.view(BS * T, N, 3, 1)[:, :, 2, :].unsqueeze(1)  # (B*T, 1, N, 1)
-        r_val = sphere_coord.view(BS * T, N, 3, 1)[:, :, 2, :].unsqueeze(1)  # (B*T, 1, N, 1)
-
+        # z, r hint 제작
         z_map_256 = VoxelMaxPool(
-            z_val,  # (BS*T, 1, N, 1)
-            ind_descartes,  # (BS*T, N, 2, 1)
+            descartes_coord.view(BS * T, N, 3, 1)[:, :, 2, :].unsqueeze(1),  # (BS*T, 1, N, 1)
+            descartes_coord.view(BS * T, N, 3, 1)[:, :, :2, :],  # (BS*T, N, 2, 1)
             output_size=(256, 256),
             scale_rate=(0.5, 0.5),
         ).view(BS, -1, 256, 256)
-
         r_map_32 = VoxelMaxPool(
-            r_val,
-            ind_sphere,
+            sphere_coord.view(BS * T, N, 3, 1)[:, :, 2, :].unsqueeze(1),  # (BS*T, 1, N, 1)
+            sphere_coord.view(BS * T, N, 3, 1)[:, :, :2, :],  # (BS*T, N, 2, 1)
             output_size=(32, 1024),
             scale_rate=(0.5, 0.5),
         ).view(BS, -1, 32, 1024)
 
+        # PointNet
+        point_feats = self.point_pre(xyzi.view(BS * T, C, N, 1))  # (BS×3, 64, 160000, 1)
         # Descartes BEV 투영 (BS, 192, 512, 512)
         descartes_feat_in = VoxelMaxPool(
             pcds_feat=point_feats,  # (BS*T, 64, 160000, 1)
-            pcds_ind=ind_descartes,  # (BS*T, N, 2, 1)
+            pcds_ind=descartes_coord.view(BS * T, N, 3, 1)[:, :, :2],  # (BS*T, N, 2, 1)
             output_size=self.descartes_bev_shape[:2],
             scale_rate=(1.0, 1.0),
         ).view(BS, -1, *self.descartes_bev_shape[:2])
@@ -173,7 +165,6 @@ class MOSNet(nn.Module):
         point_feats_t_0 = point_feats.view(BS, T, -1, N, 1)[:, 0].contiguous()  # (BS, 64, 160000, 1)
         descartes_coord_t_0 = descartes_coord[:, 0].contiguous()  # (BS, 160000, 3, 1)
         sphere_coord_t_0 = sphere_coord[:, 0].contiguous()  # (BS, 160000, 3, 1)
-
         (
             des_out_as_point,  # (BS, 64, 160000, 1)
             sph1_as_point,  # (BS, 64, 160000, 1)

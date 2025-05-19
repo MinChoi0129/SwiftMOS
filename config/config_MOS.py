@@ -2,7 +2,7 @@ def get_config():
     class General:
         log_frequency = 100
         name = __name__.rsplit("/")[-1].rsplit(".")[-1]
-        batch_size_per_gpu = 2
+        batch_size_per_gpu = 3
 
         SeqDir = "/home/workspace/KITTI/dataset/sequences"
         category_list = ["static", "moving"]
@@ -12,7 +12,7 @@ def get_config():
 
         class Voxel:
             # 해상도
-            descartes_shape = (512, 512, 6)
+            descartes_shape = (512, 512, 30)
             sphere_shape = (64, 2048, 48)
 
             # 데이터 범위(Cartesian)

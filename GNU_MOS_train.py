@@ -33,11 +33,11 @@ def save_checkpoint_and_eval_using_it(
 
     run_EVAL = False
     if epoch >= args.start_validating_epoch:
-        if epoch <= 10 and epoch in [0, 2, 9]:
+        if epoch <= 10 and epoch in [0, 2, 9]:  # 0, 2, 9
             run_EVAL = True
-        elif epoch < 40 and epoch % 10 in [4, 9]:
+        elif epoch < 40 and epoch % 10 in [4, 9]:  # 14, 19, 24, 29, 34, 39
             run_EVAL = True
-        elif epoch % 10 in [0, 2, 4, 6, 8]:
+        elif epoch >= 40 and epoch % 10 in [0, 2, 4, 6, 8]:  # 40, 42, 44, 46, 48
             run_EVAL = True
 
     if run_EVAL:
