@@ -216,46 +216,45 @@ def Quantize(pcds, range_x, range_y, range_z, size):
 #     return sphere_coords
 
 
-def SphereQuantize(
-    pcds, phi_range, theta_range, r_range, size  # (deg_min, deg_max)  # (deg_min, deg_max)  # (m_min , m_max)
-):  # (H_theta, W_phi, D_r)
+def SphereQuantize(pcds, phi_range, theta_range, r_range, size):
     """
-    RV(θ, φ, r) 양자화  → (θ_idx, φ_idx, r_idx)
-
-    Args
-    ----
-    pcds        : (N, 3)  – (x, y, z) 점 좌표 [m]
-    phi_range   : 방위각 범위 [deg]
-    theta_range : 고도각 범위 [deg]
-    r_range     : 거리  범위 [m]
-    size        : (H, W, D)  – θ, φ, r 축 bin 수
-
-    Returns
-    -------
-    sphere_coords : (N, 3) – 양자화된 (θ_idx, φ_idx, r_idx)
+    pcds: (N, 3) 포인트클라우드 (x, y, z)
+    phi_range: (min_deg, max_deg)
+    theta_range: (min_deg, max_deg)
+    r_range: (r_min, r_max)
+    size: (H, W, R) -> H: theta 해상도, W: phi 해상도, R: 반경 해상도
     """
-    H, W, D = size
-    # ① 각도·거리 단위 변환
-    phi_min, phi_max = np.deg2rad(phi_range)
-    theta_min, theta_max = np.deg2rad(theta_range)
-    r_min, r_max = r_range
+    H, W, R = size
 
-    dphi = (phi_max - phi_min) / W
-    dtheta = (theta_max - theta_min) / H
-    dr = (r_max - r_min) / D
+    # 각도 범위 라디안 변환
+    phi_rad_min = phi_range[0] * np.pi / 180.0
+    phi_rad_max = phi_range[1] * np.pi / 180.0
+    theta_rad_min = theta_range[0] * np.pi / 180.0
+    theta_rad_max = theta_range[1] * np.pi / 180.0
 
+    # 각 bin 크기
+    dphi = (phi_rad_max - phi_rad_min) / W
+    dtheta = (theta_rad_max - theta_rad_min) / H
+    dr = (r_range[1] - r_range[0]) / R
+
+    # 포인트 분리
     x, y, z = pcds[:, 0], pcds[:, 1], pcds[:, 2]
-    r = np.sqrt(x**2 + y**2 + z**2) + 1e-12
+    d = np.sqrt(x**2 + y**2 + z**2) + 1e-12  # 반경
 
-    # ② φ, θ, r 양자화
-    phi = phi_max - np.arctan2(x, y)  # [0 , 2π]
-    theta = theta_max - np.arcsin(z / r)  # [0 , θ_span]
+    # φ 양자화 (원래 방식 유지)
+    phi = phi_rad_max - np.arctan2(x, y)
+    phi_quan = phi / dphi
 
-    phi_quan = (phi - phi_min) / dphi
-    theta_quan = (theta - theta_min) / dtheta
-    r_quan = (r - r_min) / dr
+    # θ 양자화 (원래 방식 유지)
+    theta = theta_rad_max - np.arcsin(z / d)
+    theta_quan = theta / dtheta
 
-    return np.stack((theta_quan, phi_quan, r_quan), axis=-1)
+    # r 양자화
+    r_quan = (d - r_range[0]) / dr
+
+    # (theta, phi, r) 순서로 스택
+    sphere_coords = np.stack((theta_quan, phi_quan, r_quan), axis=-1)
+    return sphere_coords
 
 
 def CylinderQuantize(pcds, phi_range, range_z, size):

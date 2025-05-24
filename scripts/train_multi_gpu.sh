@@ -1,5 +1,5 @@
 #!/bin/bash
-export OMP_NUM_THREADS=1
+# export OMP_NUM_THREADS=1
 
 ConfigPath=config/config_MOS.py
 

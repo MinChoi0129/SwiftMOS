@@ -137,20 +137,6 @@ class MOSNet(nn.Module):
         """
         BS, T, C, N, _ = xyzi.shape
 
-        # z, r hint 제작
-        z_map_256 = VoxelMaxPool(
-            descartes_coord.view(BS * T, N, 3, 1)[:, :, 2, :].unsqueeze(1),  # (BS*T, 1, N, 1)
-            descartes_coord.view(BS * T, N, 3, 1)[:, :, :2, :],  # (BS*T, N, 2, 1)
-            output_size=(256, 256),
-            scale_rate=(0.5, 0.5),
-        ).view(BS, -1, 256, 256)
-        r_map_32 = VoxelMaxPool(
-            sphere_coord.view(BS * T, N, 3, 1)[:, :, 2, :].unsqueeze(1),  # (BS*T, 1, N, 1)
-            sphere_coord.view(BS * T, N, 3, 1)[:, :, :2, :],  # (BS*T, N, 2, 1)
-            output_size=(32, 1024),
-            scale_rate=(0.5, 0.5),
-        ).view(BS, -1, 32, 1024)
-
         # PointNet
         point_feats = self.point_pre(xyzi.view(BS * T, C, N, 1))  # (BS×3, 64, 160000, 1)
         # Descartes BEV 투영 (BS, 192, 512, 512)
@@ -172,9 +158,7 @@ class MOSNet(nn.Module):
             res1,  # (BS, 3, 256, 256)
             res2,  # (BS, 3, 256, 256)
             deep_128_res,  # (BS, 128, 64, 64)
-        ) = self.multi_view_network(
-            descartes_feat_in, z_map_256, r_map_32, descartes_coord_t_0, sphere_coord_t_0, deep_128_res
-        )
+        ) = self.multi_view_network(descartes_feat_in, descartes_coord_t_0, sphere_coord_t_0, deep_128_res)
 
         point_feat_out = self.point_post(point_feats_t_0, des_out_as_point, sph1_as_point)
         pred_cls = self.pred_layer(point_feat_out).float()
@@ -199,9 +183,11 @@ class MOSNet(nn.Module):
             b0_256 = res0.view(bs, time_num, -1).unsqueeze(-1)
             b1_256 = res1.view(bs, time_num, -1).unsqueeze(-1)
             b2_256 = res2.view(bs, time_num, -1).unsqueeze(-1)
+
+            label_single = label_stages[:, i].contiguous().view(bs, -1, 1)
             bev_label_single = bev_label_stages[:, i].contiguous().view(bs, -1, 1)
 
-            loss_3d = self._aux_loss(pred_cls, label_stages[:, i].contiguous(), lovasz_scale=3)
+            loss_3d = self._aux_loss(pred_cls, label_single, lovasz_scale=3)
             loss_2d_0 = self._aux_loss(b0_256, bev_label_single, lovasz_scale=3)
             loss_2d_1 = self._aux_loss(b1_256, bev_label_single, lovasz_scale=3)
             loss_2d_2 = self._aux_loss(b2_256, bev_label_single, lovasz_scale=3)

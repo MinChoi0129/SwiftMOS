@@ -1,123 +1,131 @@
-import numpy as np
+import math
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
-def _rep(t: torch.Tensor, B: int):
-    """(N,2) → (B,N,1,2)  (batch 복제용)"""
-    return t.unsqueeze(0).unsqueeze(2).repeat(B, 1, 1, 1)
-
-
-# ─────────────── Range-View ➜ BEV ────────────────
-class RV2BEV(nn.Module):
-    """
-    rv_feat   : (B,C,Hr,Wr)           (row=θ_v, col=φ_h)
-    ref_bev   : (B,C,Hb,Wb)           (x→열, y→행)   원점 = 중앙
-    """
-
+# ───────────────────────────────────────
+# BEV → RV  (2-D ▶ 2-D)
+# ───────────────────────────────────────
+class BEV2RV(nn.Module):
     def __init__(
         self,
-        rv_size,  # (Hr,Wr)
-        bev_size,  # (Hb,Wb)
-        r_max,  # 최대 투영 반경 (m/pixel 단순화용)
-        vert_row=None,  # RV에서 지평선에 해당하는 row (None ⇒ Hr//2)
-        max_batch: int = 8,
+        bev_size,  # (H_bev, W_bev)
+        rv_size,  # (H_rv, W_rv)
+        sensor_h=1.73,  # [m]
+        max_range=50.0,  # [m]
+        fov_h=(-math.pi, math.pi),
+        fov_v=(-25 * math.pi / 180, 3 * math.pi / 180),
+        range_xy=(-50.0, 50.0, -50.0, 50.0),  # xmin,xmax,ymin,ymax
     ):
         super().__init__()
-        Hr, Wr = rv_size
-        Hb, Wb = bev_size
-        vert_row = Hr // 2 if vert_row is None else vert_row
+        H_b, W_b = bev_size
+        H_r, W_r = rv_size
+        xmin, xmax, ymin, ymax = range_xy
 
-        # --- BEV 픽셀 중심 좌표 (x,y) ---
-        yy, xx = torch.meshgrid(torch.arange(Hb), torch.arange(Wb))
-        y = (yy - Hb / 2 + 0.5) * r_max / (Hb / 2 - 0.5)  # m 단위
-        x = (xx - Wb / 2 + 0.5) * r_max / (Wb / 2 - 0.5)
+        # ① RV 각도 격자
+        phi = torch.linspace(fov_v[1], fov_v[0], H_r).view(-1, 1).repeat(1, W_r)
+        theta = torch.linspace(fov_h[0], fov_h[1], W_r).view(1, -1).repeat(H_r, 1)
 
-        # --- (x,y) → (φ, row) ---
-        phi = (torch.atan2(y, x) + 2 * np.pi) % (2 * np.pi)  # 0~2π
-        col = (Wr - 1) - phi / (2 * np.pi) * (Wr - 1)  # col=0 왼쪽
-        row = torch.full_like(col, vert_row, dtype=torch.float32)  # 고정 θ_v
+        # ② z=0 평면 교차점
+        sin_phi = torch.sin(phi).clamp(min=-1.0, max=-0.017)
+        r = (sensor_h / -sin_phi).clamp(max=max_range)
+        x = r * torch.cos(phi) * torch.cos(theta)
+        y = r * torch.cos(phi) * torch.sin(theta)
 
-        grid = torch.stack((col, row), -1).view(-1, 2)
-        grid[..., 0] = grid[..., 0] / Wr * 2 - 1  # 정규화
-        grid[..., 1] = grid[..., 1] / Hr * 2 - 1
-        self.register_buffer("grid", _rep(grid, max_batch), False)
+        # ③ BEV 픽셀 → 정규화(−1~1)
+        x_pix = (x - xmin) / (xmax - xmin) * (W_b - 1)
+        y_pix = (ymax - y) / (ymax - ymin) * (H_b - 1)
+        grid_x = 2 * x_pix / (W_b - 1) - 1
+        grid_y = 2 * y_pix / (H_b - 1) - 1
 
-        yy_mask, xx_mask = torch.meshgrid(torch.arange(Hb), torch.arange(Wb))
-        dst_xy = torch.stack((yy_mask, xx_mask), -1).view(-1, 2)
-        bid = torch.arange(max_batch).unsqueeze(1).repeat(1, dst_xy.size(0))
-        self.register_buffer(
-            "oidx",
-            torch.cat((bid.unsqueeze(-1), dst_xy.repeat(max_batch, 1, 1)), -1)
-            .view(-1, 3)
-            .long(),
-            False,
+        grid = torch.stack((grid_x, grid_y), dim=-1).unsqueeze(0).float()  # (1,H_r,W_r,2)
+        self.register_buffer("grid", grid)
+
+    def forward(self, bev_feat):  # bev_feat (B,C,H_b,W_b)
+        B = bev_feat.size(0)
+        grid = self.grid.to(bev_feat.device)  # ★DDP-safe: 입력 device 사용
+        return F.grid_sample(
+            bev_feat,
+            grid.repeat(B, 1, 1, 1),
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=True,
         )
 
-    def forward(self, rv_feat: torch.Tensor, ref_bev: torch.Tensor):
-        B, C, _, _ = ref_bev.shape
-        grid = self.grid[:B].to(rv_feat.device)
-        oidx = self.oidx[: B * grid.size(1)].to(rv_feat.device)
 
-        bev = ref_bev.clone()
-        sampled = (
-            F.grid_sample(rv_feat, grid, align_corners=True)
-            .permute(0, 2, 1, 3)  # (B,N,C,1)
-            .reshape(-1, C)
-        )
-        bev[oidx[:, 0], :, oidx[:, 1], oidx[:, 2]] = sampled
-        return bev
-
-
-# ─────────────── BEV ➜ Range-View ────────────────
-class BEV2RV(nn.Module):
-    """
-    bev_feat : (B,C,Hb,Wb)
-    ref_rv   : (B,C,Hr,Wr)
-    """
-
-    def __init__(self, rv_size, bev_size, r_max, vert_row=None, max_batch: int = 8):
+# ───────────────────────────────────────
+# RV → BEV  (2-D ▶ 2-D)
+# ───────────────────────────────────────
+class RV2BEV(nn.Module):
+    def __init__(
+        self,
+        rv_size,  # (H_rv, W_rv)
+        bev_size,  # (H_bev, W_bev)
+        sensor_h=1.73,
+        max_range=50.0,
+        fov_h=(-math.pi, math.pi),
+        fov_v=(-25 * math.pi / 180, 3 * math.pi / 180),
+        range_xy=(-50.0, 50.0, -50.0, 50.0),
+    ):
         super().__init__()
-        Hr, Wr = rv_size
-        Hb, Wb = bev_size
-        vert_row = Hr // 2 if vert_row is None else vert_row
+        H_r, W_r = rv_size
+        H_b, W_b = bev_size
+        xmin, xmax, ymin, ymax = range_xy
 
-        # --- RV 픽셀 → (x,y) 평면 투영 (r 고정) ---
-        row, col = torch.meshgrid(torch.arange(Hr), torch.arange(Wr))
-        phi = (Wr - 1 - col) / (Wr - 1) * 2 * np.pi
-        r = r_max  # 단일 반경 슬라이스
-        x = r * torch.cos(phi)
-        y = r * torch.sin(phi)
+        # ① BEV 픽셀 격자 → 실제 (x,y)
+        ii, jj = torch.meshgrid(torch.arange(H_b), torch.arange(W_b))  # 기본 "ij"
+        x = xmin + jj / (W_b - 1) * (xmax - xmin)
+        y = ymax - ii / (H_b - 1) * (ymax - ymin)
 
-        idx_x = (x / r_max * (Wb / 2 - 0.5)) + (Wb / 2 - 0.5)
-        idx_y = (y / r_max * (Hb / 2 - 0.5)) + (Hb / 2 - 0.5)
+        # ② (x,y) → 각도
+        theta = torch.atan2(y, x)
+        dist_xy = torch.sqrt(x**2 + y**2).clamp(min=1e-3)
+        phi = torch.atan2(-torch.full_like(dist_xy, sensor_h), dist_xy)
 
-        grid = torch.stack((idx_x, idx_y), -1).view(-1, 2)
-        grid[..., 0] = grid[..., 0] / Wb * 2 - 1
-        grid[..., 1] = grid[..., 1] / Hb * 2 - 1
-        self.register_buffer("grid", _rep(grid, max_batch), False)
+        # ③ RV 픽셀
+        col = (theta - fov_h[0]) / (fov_h[1] - fov_h[0]) * (W_r - 1)
+        row = (fov_v[1] - phi) / (fov_v[1] - fov_v[0]) * (H_r - 1)
 
-        rc = torch.stack((row, col), -1).view(-1, 2)
-        bid = torch.arange(max_batch).unsqueeze(1).repeat(1, rc.size(0))
-        self.register_buffer(
-            "oidx",
-            torch.cat((bid.unsqueeze(-1), rc.repeat(max_batch, 1, 1)), -1)
-            .view(-1, 3)
-            .long(),
-            False,
+        # ④ FOV/거리 바깥 → 패딩 영역
+        mask = (dist_xy > max_range) | (phi < fov_v[0]) | (phi > fov_v[1])
+        col[mask], row[mask] = -2.0, -2.0
+
+        # ⑤ 정규화
+        grid_x = 2 * col / (W_r - 1) - 1
+        grid_y = 2 * row / (H_r - 1) - 1
+        grid = torch.stack((grid_x, grid_y), dim=-1).unsqueeze(0).float()  # (1,H_b,W_b,2)
+        self.register_buffer("grid", grid)
+
+    def forward(self, rv_feat):  # rv_feat (B,C,H_r,W_r)
+        B = rv_feat.size(0)
+        grid = self.grid.to(rv_feat.device)  # ★DDP-safe
+        return F.grid_sample(
+            rv_feat,
+            grid.repeat(B, 1, 1, 1),
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=True,
         )
 
-    def forward(self, bev_feat: torch.Tensor, ref_rv: torch.Tensor):
-        B, C, _, _ = ref_rv.shape
-        grid = self.grid[:B].to(bev_feat.device)
-        oidx = self.oidx[: B * grid.size(1)].to(bev_feat.device)
 
-        rv = ref_rv.clone()
-        sampled = (
-            F.grid_sample(bev_feat, grid, align_corners=True)
-            .permute(0, 2, 1, 3)
-            .reshape(-1, C)
-        )
-        rv[oidx[:, 0], :, oidx[:, 1], oidx[:, 2]] = sampled
-        return rv
+# ───────────────────────────────────────
+# 해상도별 변환기 테이블
+# ───────────────────────────────────────
+sizes = {
+    "BEV": {512: (512, 512), 256: (256, 256), 128: (128, 128)},
+    "RV": {64: (64, 2048), 32: (32, 1024), 16: (16, 512)},
+}
+
+converters = {
+    "BEV2RV": {
+        512: BEV2RV(sizes["BEV"][512], sizes["RV"][64]),
+        256: BEV2RV(sizes["BEV"][256], sizes["RV"][32]),
+        128: BEV2RV(sizes["BEV"][128], sizes["RV"][16]),
+    },
+    "RV2BEV": {
+        64: RV2BEV(sizes["RV"][64], sizes["BEV"][512]),
+        32: RV2BEV(sizes["RV"][32], sizes["BEV"][256]),
+        16: RV2BEV(sizes["RV"][16], sizes["BEV"][128]),
+    },
+}
