@@ -1,4 +1,4 @@
-# **SwiftMOS: A Fast, Lightweight Moving Object Segmentation\\via Direct Multi-View Correspondence Mapping**
+# **SwiftMOS: A Fast, Lightweight Moving Object Segmentation via Direct Multi-View Correspondence Mapping**
 
 Official code for SwiftMOS
 
@@ -16,7 +16,7 @@ $ docker run -it \
     -v (path to KITTI dataset in local):(path to KITTI dataset to set in container)
     -v /dev:/dev:ro \
     --privileged \
-    --name GNU_MOS \
+    --name SwiftMOS \
     --ipc=host \
     --gpus all \
     pytorch/pytorch:1.9.1-cuda11.1-cudnn8-devel \
@@ -29,16 +29,16 @@ $ apt-get update -y
 $ apt install -y git vim unzip wget vim git dpkg build-essential
 $ apt-get install -y libgl1-mesa-glx libglib2.0-0 libxcb-cursor0 x11-apps
 
-$ conda create -n gnumos python=3.8
-$ conda activate gnumos
+$ conda create -n swiftmos python=3.8
+$ conda activate swiftmos
 ```
 
 ### 2. Clone and Install Python Packages
 
 ##### 2.1 Clone Repository
 ```bash
-git clone https://github.com/MinChoi0129/GNU_MOS.git
-cd GNU_MOS
+git clone https://github.com/MinChoi0129/SwiftMOS.git
+cd SwiftMOS
 ```
 
 ##### 2.2 Install more packages
