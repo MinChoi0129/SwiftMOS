@@ -32,8 +32,8 @@ class MOSNet(nn.Module):
     def __init__(self, pModel):
         super(MOSNet, self).__init__()
         self.pModel = pModel
-        self.descartes_bev_shape = list(pModel.Voxel.descartes_shape)
-        self.sphere_bev_shape = list(pModel.Voxel.sphere_shape)
+        self.descartes_shape = list(pModel.Voxel.descartes_shape)
+        self.sphere_shape = list(pModel.Voxel.sphere_shape)
 
         self._build_network()
         self._build_loss()
@@ -143,9 +143,9 @@ class MOSNet(nn.Module):
         descartes_feat_in = VoxelMaxPool(
             pcds_feat=point_feats,  # (BS*T, 64, 160000, 1)
             pcds_ind=descartes_coord.view(BS * T, N, 3, 1)[:, :, :2],  # (BS*T, N, 2, 1)
-            output_size=self.descartes_bev_shape[:2],
+            output_size=self.descartes_shape[:2],
             scale_rate=(1.0, 1.0),
-        ).view(BS, -1, *self.descartes_bev_shape[:2])
+        ).view(BS, -1, *self.descartes_shape[:2])
 
         # t_0 시점 데이터(피처, c좌표, p좌표)
         point_feats_t_0 = point_feats.view(BS, T, -1, N, 1)[:, 0].contiguous()  # (BS, 64, 160000, 1)

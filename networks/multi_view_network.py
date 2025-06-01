@@ -151,16 +151,22 @@ class MultiViewNetwork(nn.Module):
         """ Encoder """
 
         # Descartes Encoder 0 -> BEV to RV
+        # self.save_feature_as_img(descartes_feat_in, "descartes_feat_in")
         des0 = self.descartes_header(descartes_feat_in)  # (BS, C=32, H=256, W=256)
+        # self.save_feature_as_img(des0, "des0")
         des0_as_sph = self.des_2_sph_direct(des0)  # (BS, C=32, H=32, W=1024)
+        # self.save_feature_as_img(des0_as_sph, "des0_as_sph")
 
         # Spherical Encoder 0 -> RV to BEV
         sph0 = self.sphere_header(des0_as_sph)  # (BS, C=32, H=32, W=1024)
+        # self.save_feature_as_img(sph0, "sph0")
         sph0_as_des = self.sph_2_des_direct(sph0)  # (BS, C=32, H=256, W=256)
+        # self.save_feature_as_img(sph0_as_des, "sph0_as_des")
 
         # Concatenate BEV and Spherical -> Channel Down
         des0 = torch.cat((des0, sph0_as_des), dim=1)  # (BS, C=64, H=256, W=256)
         des0 = self.header_channel_down(des0)  # (BS, C=32, H=256, W=256)
+        # self.save_feature_as_img(des0, "des0_concated")
 
         # Descartes Encoder 1 -> BEV to RV
         des1 = self.descartes_res1(des0)  # (BS, C=64, H=128, W=128)

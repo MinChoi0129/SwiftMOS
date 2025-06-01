@@ -319,7 +319,7 @@ class DataloadVal(Dataset):
         self.frame_point_num = config.frame_point_num
         self.Voxel = config.Voxel
         with open("datasets/semantic-kitti.yaml", "r") as f:
-            self.task_cfg = yaml.load(f)
+            self.task_cfg = yaml.load(f, Loader=yaml.FullLoader)
 
         seq_num = config.seq_num
         # add validation data
@@ -475,6 +475,152 @@ class DataloadVal(Dataset):
             sphere_coord,  # [3, 160000, 2, 1]
             label,  # [160000, 1]
             bev_label,  # [256, 256, 1]
+            valid_mask_list,
+            pad_length_list,
+            meta_list_raw,
+        )
+
+    def __len__(self):
+        return len(self.flist)
+
+
+class DataloadTest(Dataset):
+    def __init__(self, config, seq):
+        self.flist = []
+        self.config = config
+        self.frame_point_num = config.frame_point_num
+        self.Voxel = config.Voxel
+        with open("datasets/semantic-kitti.yaml", "r") as f:
+            self.task_cfg = yaml.load(f, Loader=yaml.FullLoader)
+
+        seq_num = config.seq_num
+        # add validation data
+        seq_split = [seq]
+
+        for seq_id in seq_split:
+            fpath = os.path.join(config.SeqDir, seq_id)
+            fpath_pcd = os.path.join(fpath, "velodyne")
+            fname_calib = os.path.join(fpath, "calib.txt")
+            fname_pose = os.path.join(fpath, "poses.txt")
+
+            calib = utils.parse_calibration(fname_calib)
+            poses_list = utils.parse_poses(fname_pose, calib)
+            for i in range(len(poses_list)):
+                meta_list = []
+                meta_list_raw = []
+                current_pose_inv = np.linalg.inv(poses_list[i])
+                if i < (seq_num - 1):
+                    # backward
+                    for ht in range(seq_num):
+                        file_id = str(i + ht).rjust(6, "0")
+                        fname_pcd = os.path.join(fpath_pcd, "{}.bin".format(file_id))
+                        pose_diff = current_pose_inv.dot(poses_list[i + ht])
+                        meta_list.append((fname_pcd, pose_diff, seq_id, file_id))
+                        meta_list_raw.append((fname_pcd, pose_diff, seq_id, file_id))
+                elif i > (len(poses_list) - seq_num):
+                    # forward
+                    for ht in range(seq_num):
+                        file_id = str(i - ht).rjust(6, "0")
+                        fname_pcd = os.path.join(fpath_pcd, "{}.bin".format(file_id))
+                        pose_diff = current_pose_inv.dot(poses_list[i - ht])
+                        meta_list.append((fname_pcd, pose_diff, seq_id, file_id))
+                        meta_list_raw.append((fname_pcd, pose_diff, seq_id, file_id))
+                else:
+                    # forward
+                    for ht in range(seq_num):
+                        file_id = str(i - ht).rjust(6, "0")
+                        fname_pcd = os.path.join(fpath_pcd, "{}.bin".format(file_id))
+                        pose_diff = current_pose_inv.dot(poses_list[i - ht])
+                        meta_list_raw.append((fname_pcd, pose_diff, seq_id, file_id))
+
+                    # backward
+                    for ht in range(seq_num):
+                        file_id = str(i + ht).rjust(6, "0")
+                        fname_pcd = os.path.join(fpath_pcd, "{}.bin".format(file_id))
+                        pose_diff = current_pose_inv.dot(poses_list[i + ht])
+                        meta_list.append((fname_pcd, pose_diff, seq_id, file_id))
+
+                self.flist.append((meta_list, meta_list_raw))
+
+    def form_batch(self, pcds_total):
+        N = pcds_total.shape[0] // self.config.seq_num
+        pcds_xyzi = pcds_total[:, :4]
+
+        pcds_descartes_coord = utils.Quantize(
+            pcds_xyzi,
+            range_x=self.Voxel.range_x,
+            range_y=self.Voxel.range_y,
+            range_z=self.Voxel.range_z,
+            size=self.Voxel.descartes_shape,
+        )
+
+        pcds_sphere_coord = utils.SphereQuantize(
+            pcds_xyzi,
+            phi_range=self.Voxel.range_phi,
+            theta_range=self.Voxel.range_theta,
+            r_range=self.Voxel.range_r,
+            size=self.Voxel.sphere_shape,
+        )
+
+        # make feature
+        pcds_xyzi = make_point_feat(pcds_xyzi, pcds_descartes_coord)
+        pcds_xyzi = torch.FloatTensor(pcds_xyzi.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
+        pcds_xyzi = pcds_xyzi.permute(0, 2, 1, 3).contiguous()
+
+        pcds_descartes_coord = torch.FloatTensor(pcds_descartes_coord.astype(np.float32)).view(
+            self.config.seq_num, N, -1, 1
+        )
+        pcds_sphere_coord = torch.FloatTensor(pcds_sphere_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
+
+        return pcds_xyzi, pcds_descartes_coord, pcds_sphere_coord
+
+    def form_seq(self, meta_list):
+        pc_list = []
+        for ht in range(self.config.seq_num):
+            fname_pcd, pose_diff, _, _ = meta_list[ht]
+            pcds_tmp = np.fromfile(fname_pcd, dtype=np.float32).reshape((-1, 4))
+            pcds_ht = utils.Trans(pcds_tmp, pose_diff)
+            pc_list.append(pcds_ht)
+
+        return pc_list
+
+    def __getitem__(self, index):
+        meta_list, meta_list_raw = self.flist[index]
+
+        pc_list = self.form_seq(meta_list_raw)
+
+        valid_mask_list = []
+        for ht in range(len(pc_list)):
+            valid_mask_ht = utils.filter_pcds_mask(
+                pc_list[ht],
+                range_x=self.Voxel.range_x,
+                range_y=self.Voxel.range_y,
+                range_z=self.Voxel.range_z,
+            )
+            pc_list[ht] = pc_list[ht][valid_mask_ht]
+            valid_mask_list.append(valid_mask_ht)
+
+        pad_length_list = []
+        for ht in range(len(pc_list)):
+            pad_length = self.frame_point_num - pc_list[ht].shape[0]
+            assert pad_length >= 0
+            pc_list[ht] = np.pad(
+                pc_list[ht],
+                ((0, pad_length), (0, 0)),
+                "constant",
+                constant_values=-1000,
+            )
+            pc_list[ht][-pad_length:, 2] = -4000
+            pad_length_list.append(pad_length)
+
+        pc_list = np.concatenate(pc_list, axis=0)
+
+        xyzi, descartes_coord, sphere_coord = self.form_batch(pc_list.copy())
+
+        return (
+            xyzi,  # [3, 7, 160000, 1]
+            descartes_coord,  # [3, 160000, 3, 1]
+            sphere_coord,  # [3, 160000, 2, 1]
             valid_mask_list,
             pad_length_list,
             meta_list_raw,

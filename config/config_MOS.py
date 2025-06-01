@@ -46,7 +46,14 @@ def get_config():
                 size_range = (0.95, 1.05)
 
         class Val:
-            num_workers = 1
+            num_workers = 3
+            frame_point_num = 160000
+            SeqDir = General.SeqDir
+            Voxel = General.Voxel
+            seq_num = General.K + 1
+
+        class Test:
+            num_workers = 3
             frame_point_num = 160000
             SeqDir = General.SeqDir
             Voxel = General.Voxel
