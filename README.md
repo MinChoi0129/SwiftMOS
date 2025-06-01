@@ -1,8 +1,6 @@
-# **GNU MOS: Multi-View Moving Object Segmentation**
+# **SwiftMOS: A Fast, Lightweight Moving Object Segmentation\\via Direct Multi-View Correspondence Mapping**
 
-Official code for GNU MOS
-
-GNU stands for 'Gyeongsang National University'.
+Official code for SwiftMOS
 
 ### 1. Basic Environment
 
