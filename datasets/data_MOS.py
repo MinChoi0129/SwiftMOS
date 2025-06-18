@@ -17,14 +17,14 @@ def VoxelMaxPool(pcds_feat, pcds_ind, output_size, scale_rate):
     return voxel_feat
 
 
-def generate_bev_labels(c_coord, label):
-    c_coord = torch.clone(c_coord[:1, :, :2, :])  # 1, 160000, 2, 1
+def generate_img_labels(coord, label, size):
+    coord = torch.clone(coord[:1, :, :2, :])  # 1, 160000, 2, 1
     label = torch.clone(label).unsqueeze(0).unsqueeze(0)  # 1, 1, 160000, 1
-    c_label = (
+    img_label = (
         VoxelMaxPool(
             pcds_feat=label,
-            pcds_ind=c_coord,
-            output_size=(256, 256),
+            pcds_ind=coord,
+            output_size=size,
             scale_rate=(0.5, 0.5),
         )
         .squeeze(0)
@@ -32,7 +32,7 @@ def generate_bev_labels(c_coord, label):
         .unsqueeze(-1)
     )
 
-    return c_label  # 256, 256, 1
+    return img_label  # H, W, 1
 
 
 def make_point_feat(pcds_xyzi, pcds_coord):
@@ -50,6 +50,9 @@ def make_point_feat(pcds_xyzi, pcds_coord):
 
     point_feat = np.stack((x, y, z, intensity, dist, diff_x, diff_y), axis=-1)
     return point_feat
+
+
+other_mode = "sphere"
 
 
 class DataloadTrain(Dataset):
@@ -190,13 +193,34 @@ class DataloadTrain(Dataset):
             size=self.Voxel.descartes_shape,
         )
 
-        pcds_sphere_coord = utils.SphereQuantize(
-            pcds_xyzi,
-            phi_range=self.Voxel.range_phi,
-            theta_range=self.Voxel.range_theta,
-            r_range=self.Voxel.range_r,
-            size=self.Voxel.sphere_shape,
-        )
+        other_mode = "sphere"
+
+        if other_mode == "sphere":
+            pcds_sphere_coord = utils.SphereQuantize(
+                pcds_xyzi,
+                phi_range=self.Voxel.range_phi,
+                theta_range=self.Voxel.range_theta,
+                r_range=self.Voxel.range_r,
+                size=self.Voxel.sphere_shape,
+            )
+            pcds_other_than_descartes = pcds_sphere_coord
+        elif other_mode == "cylinder":
+            pcds_cylinder_coord = utils.CylinderQuantize(
+                pcds_xyzi,
+                phi_range=self.Voxel.range_phi,
+                z_range=self.Voxel.range_z,
+                r_range=self.Voxel.range_r,
+                size=self.Voxel.cylinder_shape,
+            )
+            pcds_other_than_descartes = pcds_cylinder_coord
+        elif other_mode == "polar":
+            pcds_polar_coord = utils.PolarQuantize(
+                pcds_xyzi,
+                phi_range=self.Voxel.range_phi,
+                r_range=self.Voxel.range_r,
+                size=self.Voxel.polar_shape,
+            )
+            pcds_other_than_descartes = pcds_polar_coord
 
         # make feature
         pcds_xyzi = make_point_feat(pcds_xyzi, pcds_descartes_coord)
@@ -206,9 +230,11 @@ class DataloadTrain(Dataset):
         pcds_descartes_coord = torch.FloatTensor(pcds_descartes_coord.astype(np.float32)).view(
             self.config.seq_num, N, -1, 1
         )
-        pcds_sphere_coord = torch.FloatTensor(pcds_sphere_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
+        pcds_other_than_descartes = torch.FloatTensor(pcds_other_than_descartes.astype(np.float32)).view(
+            self.config.seq_num, N, -1, 1
+        )
 
-        return pcds_xyzi, pcds_descartes_coord, pcds_sphere_coord
+        return pcds_xyzi, pcds_descartes_coord, pcds_other_than_descartes
 
     def form_seq(self, meta_list):
         pc_list = []
@@ -240,8 +266,8 @@ class DataloadTrain(Dataset):
         xyzi_stages = []
         descartes_coord_stages = []
         sphere_coord_stages = []
-        label_stages = []
-        bev_label_stages = []
+        label_3D_stages = []
+        label_2D_stages = []
         meta_list_raw_stages = []
 
         for idx in [index, index - 1, index - 2]:
@@ -282,29 +308,29 @@ class DataloadTrain(Dataset):
 
             # [3, 7, 160000, 1], [3, 160000, 3, 1], [3, 160000, 2, 1]
             xyzi, descartes_coord, sphere_coord = self.form_batch(pc_list.copy())
-            label = torch.LongTensor(pc_label_list[0].astype(np.long)).unsqueeze(-1)
-            bev_label = generate_bev_labels(descartes_coord, label)
+            label_3D = torch.LongTensor(pc_label_list[0].astype(np.long)).unsqueeze(-1)
+            label_2D = generate_img_labels(descartes_coord, label_3D, size=(256, 256))
 
             xyzi_stages.append(xyzi)
             descartes_coord_stages.append(descartes_coord)
             sphere_coord_stages.append(sphere_coord)
-            label_stages.append(label)
-            bev_label_stages.append(bev_label)
+            label_3D_stages.append(label_3D)
+            label_2D_stages.append(label_2D)
             meta_list_raw_stages.append(meta_list_raw)
 
         xyzi_stages = torch.stack(xyzi_stages, dim=0)
         descartes_coord_stages = torch.stack(descartes_coord_stages, dim=0)
         sphere_coord_stages = torch.stack(sphere_coord_stages, dim=0)
-        label_stages = torch.stack(label_stages, dim=0)
-        bev_label_stages = torch.stack(bev_label_stages, dim=0)
+        label_3D_stages = torch.stack(label_3D_stages, dim=0)
+        label_2D_stages = torch.stack(label_2D_stages, dim=0)
         meta_list_raw_stages = meta_list_raw_stages[0]
 
         return (
             xyzi_stages,  # [Stage, 3, 7, 160000, 1]
             descartes_coord_stages,  # [Stage, 3, 160000, 3, 1]
             sphere_coord_stages,  # [Stage, 3, 160000, 2, 1]
-            label_stages,  # [Stage, 160000, 1]
-            bev_label_stages,  # [Stage, 256, 256, 1]
+            label_3D_stages,  # [Stage, 160000, 1]
+            label_2D_stages,  # [Stage, 32, 1024, 1]
             meta_list_raw_stages,
         )
 
@@ -391,13 +417,34 @@ class DataloadVal(Dataset):
             size=self.Voxel.descartes_shape,
         )
 
-        pcds_sphere_coord = utils.SphereQuantize(
-            pcds_xyzi,
-            phi_range=self.Voxel.range_phi,
-            theta_range=self.Voxel.range_theta,
-            r_range=self.Voxel.range_r,
-            size=self.Voxel.sphere_shape,
-        )
+        other_mode = "sphere"
+
+        if other_mode == "sphere":
+            pcds_sphere_coord = utils.SphereQuantize(
+                pcds_xyzi,
+                phi_range=self.Voxel.range_phi,
+                theta_range=self.Voxel.range_theta,
+                r_range=self.Voxel.range_r,
+                size=self.Voxel.sphere_shape,
+            )
+            pcds_other_than_descartes = pcds_sphere_coord
+        elif other_mode == "cylinder":
+            pcds_cylinder_coord = utils.CylinderQuantize(
+                pcds_xyzi,
+                phi_range=self.Voxel.range_phi,
+                z_range=self.Voxel.range_z,
+                r_range=self.Voxel.range_r,
+                size=self.Voxel.cylinder_shape,
+            )
+            pcds_other_than_descartes = pcds_cylinder_coord
+        elif other_mode == "polar":
+            pcds_polar_coord = utils.PolarQuantize(
+                pcds_xyzi,
+                phi_range=self.Voxel.range_phi,
+                r_range=self.Voxel.range_r,
+                size=self.Voxel.polar_shape,
+            )
+            pcds_other_than_descartes = pcds_polar_coord
 
         # make feature
         pcds_xyzi = make_point_feat(pcds_xyzi, pcds_descartes_coord)
@@ -407,9 +454,11 @@ class DataloadVal(Dataset):
         pcds_descartes_coord = torch.FloatTensor(pcds_descartes_coord.astype(np.float32)).view(
             self.config.seq_num, N, -1, 1
         )
-        pcds_sphere_coord = torch.FloatTensor(pcds_sphere_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
+        pcds_other_than_descartes = torch.FloatTensor(pcds_other_than_descartes.astype(np.float32)).view(
+            self.config.seq_num, N, -1, 1
+        )
 
-        return pcds_xyzi, pcds_descartes_coord, pcds_sphere_coord
+        return pcds_xyzi, pcds_descartes_coord, pcds_other_than_descartes
 
     def form_seq(self, meta_list):
         pc_list = []
@@ -464,17 +513,17 @@ class DataloadVal(Dataset):
             pad_length_list.append(pad_length)
 
         pc_list = np.concatenate(pc_list, axis=0)
-        label = torch.LongTensor(pc_label_list[0].astype(np.long)).unsqueeze(-1)
 
         xyzi, descartes_coord, sphere_coord = self.form_batch(pc_list.copy())
-        bev_label = generate_bev_labels(descartes_coord, label)
+        label_3D = torch.LongTensor(pc_label_list[0].astype(np.long)).unsqueeze(-1)
+        label_2D = generate_img_labels(descartes_coord, label_3D, size=(256, 256))
 
         return (
             xyzi,  # [3, 7, 160000, 1]
             descartes_coord,  # [3, 160000, 3, 1]
             sphere_coord,  # [3, 160000, 2, 1]
-            label,  # [160000, 1]
-            bev_label,  # [256, 256, 1]
+            label_3D,  # [160000, 1]
+            label_2D,  # [32, 1024, 1]
             valid_mask_list,
             pad_length_list,
             meta_list_raw,
@@ -554,13 +603,32 @@ class DataloadTest(Dataset):
             size=self.Voxel.descartes_shape,
         )
 
-        pcds_sphere_coord = utils.SphereQuantize(
-            pcds_xyzi,
-            phi_range=self.Voxel.range_phi,
-            theta_range=self.Voxel.range_theta,
-            r_range=self.Voxel.range_r,
-            size=self.Voxel.sphere_shape,
-        )
+        if other_mode == "sphere":
+            pcds_sphere_coord = utils.SphereQuantize(
+                pcds_xyzi,
+                phi_range=self.Voxel.range_phi,
+                theta_range=self.Voxel.range_theta,
+                r_range=self.Voxel.range_r,
+                size=self.Voxel.sphere_shape,
+            )
+            pcds_other_than_descartes = pcds_sphere_coord
+        elif other_mode == "cylinder":
+            pcds_cylinder_coord = utils.CylinderQuantize(
+                pcds_xyzi,
+                phi_range=self.Voxel.range_phi,
+                z_range=self.Voxel.range_z,
+                r_range=self.Voxel.range_r,
+                size=self.Voxel.cylinder_shape,
+            )
+            pcds_other_than_descartes = pcds_cylinder_coord
+        elif other_mode == "polar":
+            pcds_polar_coord = utils.PolarQuantize(
+                pcds_xyzi,
+                phi_range=self.Voxel.range_phi,
+                r_range=self.Voxel.range_r,
+                size=self.Voxel.polar_shape,
+            )
+            pcds_other_than_descartes = pcds_polar_coord
 
         # make feature
         pcds_xyzi = make_point_feat(pcds_xyzi, pcds_descartes_coord)
@@ -570,9 +638,11 @@ class DataloadTest(Dataset):
         pcds_descartes_coord = torch.FloatTensor(pcds_descartes_coord.astype(np.float32)).view(
             self.config.seq_num, N, -1, 1
         )
-        pcds_sphere_coord = torch.FloatTensor(pcds_sphere_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
+        pcds_other_than_descartes = torch.FloatTensor(pcds_other_than_descartes.astype(np.float32)).view(
+            self.config.seq_num, N, -1, 1
+        )
 
-        return pcds_xyzi, pcds_descartes_coord, pcds_sphere_coord
+        return pcds_xyzi, pcds_descartes_coord, pcds_other_than_descartes
 
     def form_seq(self, meta_list):
         pc_list = []

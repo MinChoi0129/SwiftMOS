@@ -145,31 +145,14 @@ def recolor(pcds_labels, color_map):
 ##############################################################################################
 
 
-def PolarQuantize(pcds, range_phi, range_r, size):
-
-    # 1) xyz → polar
-    x, y = pcds[:, 0], pcds[:, 1]
-    theta_rad = np.arctan2(y, x)  # [-π, π] rad
-    r = np.sqrt(x**2 + y**2)
-
-    # 2) degree 범위 → rad 범위
-    phi_min, phi_max = np.deg2rad(range_phi)  # rad 변환
-    r_min, r_max = range_r
-    n_r, n_phi = size
-
-    # 3) bin 간격
-    dphi = (phi_max - phi_min) / n_phi
-    dr = (r_max - r_min) / n_r
-
-    # 4) 실수 인덱스 계산
-    phi_idx = (theta_rad - phi_min) / dphi  # 가로(열) 인덱스
-    r_idx = (r - r_min) / dr  # 세로(행) 인덱스
-
-    # 5) 스택 (행, 열 순서) 후 반환
-    return np.stack((r_idx, phi_idx), axis=-1)
-
-
-def Quantize(pcds, range_x, range_y, range_z, size):
+def Quantize(pcds, range_x, range_y, range_z, size):  # bird's eye view
+    """
+    pcds: (N, 3) 포인트클라우드 (x, y, z)
+    range_x: (x_min, x_max)
+    range_y: (y_min, y_max)
+    range_z: (z_min, z_max)
+    size: (H, W, Z) -> H: x 해상도, W: y 해상도, Z: z 해상도
+    """
     x = pcds[:, 0].copy()
     y = pcds[:, 1].copy()
     z = pcds[:, 2].copy()
@@ -190,33 +173,7 @@ def Quantize(pcds, range_x, range_y, range_z, size):
     return pcds_quan
 
 
-# def SphereQuantize(pcds, phi_range, theta_range, size):
-#     H = size[0]
-#     W = size[1]
-
-#     phi_range_radian = (phi_range[0] * np.pi / 180.0, phi_range[1] * np.pi / 180.0)
-#     theta_range_radian = (
-#         theta_range[0] * np.pi / 180.0,
-#         theta_range[1] * np.pi / 180.0,
-#     )
-
-#     dphi = (phi_range_radian[1] - phi_range_radian[0]) / W
-#     dtheta = (theta_range_radian[1] - theta_range_radian[0]) / H
-
-#     x, y, z = pcds[:, 0], pcds[:, 1], pcds[:, 2]
-#     d = np.sqrt(x**2 + y**2 + z**2) + 1e-12
-
-#     phi = phi_range_radian[1] - np.arctan2(x, y)
-#     phi_quan = phi / dphi
-
-#     theta = theta_range_radian[1] - np.arcsin(z / d)
-#     theta_quan = theta / dtheta
-
-#     sphere_coords = np.stack((theta_quan, phi_quan), axis=-1)
-#     return sphere_coords
-
-
-def SphereQuantize(pcds, phi_range, theta_range, r_range, size):
+def SphereQuantize(pcds, phi_range, theta_range, r_range, size):  # range view
     """
     pcds: (N, 3) 포인트클라우드 (x, y, z)
     phi_range: (min_deg, max_deg)
@@ -257,24 +214,79 @@ def SphereQuantize(pcds, phi_range, theta_range, r_range, size):
     return sphere_coords
 
 
-def CylinderQuantize(pcds, phi_range, range_z, size):
-    H = size[0]
-    W = size[1]
+def CylinderQuantize(pcds, phi_range, z_range, r_range, size):
+    """
+    pcds: (N, 3) 포인트클라우드 (x, y, z)
+    phi_range: (min_deg, max_deg)
+    z_range: (z_min, z_max)
+    r_range: (r_min, r_max)
+    size: (H, W, R) -> H: z 해상도, W: phi 해상도, R: 반경 해상도
+    """
+    H, W, R = size
 
-    phi_range_radian = (phi_range[0] * np.pi / 180.0, phi_range[1] * np.pi / 180.0)
-    dphi = (phi_range_radian[1] - phi_range_radian[0]) / W
+    # 각도 범위 라디안 변환
+    phi_rad_min = phi_range[0] * np.pi / 180.0
+    phi_rad_max = phi_range[1] * np.pi / 180.0
 
-    dz = (range_z[1] - range_z[0]) / H
+    # 각 bin 크기
+    dphi = (phi_rad_max - phi_rad_min) / W
+    dz = (z_range[1] - z_range[0]) / H
+    dr = (r_range[1] - r_range[0]) / R
 
+    # 포인트 분리
     x, y, z = pcds[:, 0], pcds[:, 1], pcds[:, 2]
+    r = np.sqrt(x**2 + y**2) + 1e-12  # 반경 (xy 평면에서의 거리)
 
-    phi = phi_range_radian[1] - np.arctan2(x, y)
+    # φ 양자화
+    phi = phi_rad_max - np.arctan2(x, y)
     phi_quan = phi / dphi
 
-    z_quan = (z - range_z[0]) / dz
+    # z 양자화
+    z_quan = (z - z_range[0]) / dz
 
-    cylinder_coords = np.stack((z_quan, phi_quan), axis=-1)
+    # r 양자화
+    r_quan = (r - r_range[0]) / dr
+
+    # (z, phi, r) 순서로 스택
+    cylinder_coords = np.stack((z_quan, phi_quan, r_quan), axis=-1)
     return cylinder_coords
+
+
+def PolarQuantize(pcds, phi_range, r_range, size):
+    """
+    pcds: (N, 3) 포인트클라우드 (x, y, z)
+    phi_range: (min_deg, max_deg)
+    r_range: (r_min, r_max)
+    size: (H, W, Z) -> H: r 해상도, W: phi 해상도, Z: z 해상도
+    """
+    H, W, Z = size
+
+    # 각도 범위 라디안 변환
+    phi_rad_min = phi_range[0] * np.pi / 180.0
+    phi_rad_max = phi_range[1] * np.pi / 180.0
+
+    # 각 bin 크기
+    dphi = (phi_rad_max - phi_rad_min) / W
+    dr = (r_range[1] - r_range[0]) / H
+    dz = (pcds[:, 2].max() - pcds[:, 2].min()) / Z
+
+    # 포인트 분리
+    x, y, z = pcds[:, 0], pcds[:, 1], pcds[:, 2]
+    r = np.sqrt(x**2 + y**2) + 1e-12  # 반경
+
+    # φ 양자화
+    phi = phi_rad_max - np.arctan2(x, y)
+    phi_quan = phi / dphi
+
+    # r 양자화
+    r_quan = (r - r_range[0]) / dr
+
+    # z 양자화
+    z_quan = (z - pcds[:, 2].min()) / dz
+
+    # (r, phi, z) 순서로 스택
+    polar_coords = np.stack((r_quan, phi_quan, z_quan), axis=-1)
+    return polar_coords
 
 
 class DataAugment:

@@ -16,16 +16,12 @@ from utils.pretty_print import shprint
 
 def VoxelMaxPool(pcds_feat, pcds_ind, output_size, scale_rate):
     voxel_feat = deep_point.VoxelMaxPool(
-        pcds_feat=pcds_feat.contiguous().float(),
+        pcds_feat=pcds_feat.contiguous(),
         pcds_ind=pcds_ind.contiguous(),
         output_size=output_size,
         scale_rate=scale_rate,
     ).to(pcds_feat.dtype)
     return voxel_feat
-
-
-grid_2_point_scale_full = backbone.BilinearSample(scale_rate=(1.0, 1.0))
-grid_2_point_scale_05 = backbone.BilinearSample(scale_rate=(0.5, 0.5))
 
 
 class MOSNet(nn.Module):
@@ -125,7 +121,7 @@ class MOSNet(nn.Module):
     def _build_network(self):
         self.point_pre = backbone.PointNetStacker(7, 64, pre_bn=True, stack_num=2)
         self.multi_view_network = multi_view_network.MultiViewNetwork()
-        self.point_post = CatFusion([64, 64, 64], 64)
+        self.point_post = CatFusion([64, 64, 32], 64)
         self.pred_layer = backbone.PredBranch(64, 3)
 
     def stage_forward(self, xyzi, descartes_coord, sphere_coord, deep_128_res):
@@ -139,6 +135,7 @@ class MOSNet(nn.Module):
 
         # PointNet
         point_feats = self.point_pre(xyzi.view(BS * T, C, N, 1))  # (BS×3, 64, 160000, 1)
+
         # Descartes BEV 투영 (BS, 192, 512, 512)
         descartes_feat_in = VoxelMaxPool(
             pcds_feat=point_feats,  # (BS*T, 64, 160000, 1)
@@ -147,51 +144,61 @@ class MOSNet(nn.Module):
             scale_rate=(1.0, 1.0),
         ).view(BS, -1, *self.descartes_shape[:2])
 
+        sphere_feat_in = VoxelMaxPool(
+            pcds_feat=point_feats,  # (BS*T, 64, 160000, 1)
+            pcds_ind=sphere_coord.view(BS * T, N, 3, 1)[:, :, :2],  # (BS*T, N, 2, 1)
+            output_size=self.sphere_shape[:2],
+            scale_rate=(1.0, 1.0),
+        ).view(BS, -1, *self.sphere_shape[:2])
+
         # t_0 시점 데이터(피처, c좌표, p좌표)
         point_feats_t_0 = point_feats.view(BS, T, -1, N, 1)[:, 0].contiguous()  # (BS, 64, 160000, 1)
         descartes_coord_t_0 = descartes_coord[:, 0].contiguous()  # (BS, 160000, 3, 1)
         sphere_coord_t_0 = sphere_coord[:, 0].contiguous()  # (BS, 160000, 3, 1)
         (
             des_out_as_point,  # (BS, 64, 160000, 1)
-            sph1_as_point,  # (BS, 64, 160000, 1)
-            res0,  # (BS, 3, 256, 256)
-            res1,  # (BS, 3, 256, 256)
-            res2,  # (BS, 3, 256, 256)
-            deep_128_res,  # (BS, 128, 64, 64)
-        ) = self.multi_view_network(descartes_feat_in, descartes_coord_t_0, sphere_coord_t_0, deep_128_res)
+            sph_out_as_point,  # (BS, 32, 160000, 1)
+            aux0,  # (BS, 3, 32, 1024)
+            aux1,  # (BS, 3, 32, 1024)
+            aux2,  # (BS, 3, 32, 1024)
+            deep_128_res,  # (BS, 128, 8, 256)
+        ) = self.multi_view_network(
+            descartes_feat_in, sphere_feat_in, descartes_coord_t_0, sphere_coord_t_0, deep_128_res
+        )
 
-        point_feat_out = self.point_post(point_feats_t_0, des_out_as_point, sph1_as_point)
+        point_feat_out = self.point_post(point_feats_t_0, des_out_as_point, sph_out_as_point)
         pred_cls = self.pred_layer(point_feat_out).float()
 
-        return pred_cls, res0, res1, res2, deep_128_res
+        return pred_cls, aux0, aux1, aux2, deep_128_res
 
-    def forward(self, xyzi_stages, descartes_coord_stages, sphere_coord_stages, label_stages, bev_label_stages):
+    def forward(self, xyzi_stages, descartes_coord_stages, sphere_coord_stages, label_3D_stages, label_2D_stages):
         """Start 3-Stage Forwarding"""
         stage = 3
         losses, losses_2d, losses_3d = [], [], []
         deep_128_res = None
         for i in range(stage):
 
-            pred_cls, res0, res1, res2, deep_128_res = self.stage_forward(
+            pred_cls, aux1, aux2, aux3, deep_128_res = self.stage_forward(
                 xyzi_stages[:, i].contiguous(),
                 descartes_coord_stages[:, i].contiguous(),
                 sphere_coord_stages[:, i].contiguous(),
                 deep_128_res,
             )
 
+            # 1, 3, 256, 256 -> 1, 3, 256*256, 1
             bs, time_num, _, _ = pred_cls.shape
-            b0_256 = res0.view(bs, time_num, -1).unsqueeze(-1)
-            b1_256 = res1.view(bs, time_num, -1).unsqueeze(-1)
-            b2_256 = res2.view(bs, time_num, -1).unsqueeze(-1)
+            aux1 = aux1.view(bs, time_num, -1).unsqueeze(-1)
+            aux2 = aux2.view(bs, time_num, -1).unsqueeze(-1)
+            aux3 = aux3.view(bs, time_num, -1).unsqueeze(-1)
 
-            label_single = label_stages[:, i].contiguous().view(bs, -1, 1)
-            bev_label_single = bev_label_stages[:, i].contiguous().view(bs, -1, 1)
+            label_3D_single = label_3D_stages[:, i].contiguous().view(bs, -1, 1)
+            label_2D_single = label_2D_stages[:, i].contiguous().view(bs, -1, 1)
 
-            loss_3d = self._aux_loss(pred_cls, label_single, lovasz_scale=3)
-            loss_2d_0 = self._aux_loss(b0_256, bev_label_single, lovasz_scale=3)
-            loss_2d_1 = self._aux_loss(b1_256, bev_label_single, lovasz_scale=3)
-            loss_2d_2 = self._aux_loss(b2_256, bev_label_single, lovasz_scale=3)
-            loss_2d = (loss_2d_0 + loss_2d_1 + loss_2d_2) / 3
+            loss_3d = self._aux_loss(pred_cls, label_3D_single, lovasz_scale=3)
+            loss_2d_1 = self._aux_loss(aux1, label_2D_single, lovasz_scale=3)
+            loss_2d_2 = self._aux_loss(aux2, label_2D_single, lovasz_scale=3)
+            loss_2d_3 = self._aux_loss(aux3, label_2D_single, lovasz_scale=3)
+            loss_2d = (loss_2d_1 + loss_2d_2 + loss_2d_3) / 3
 
             loss = loss_3d + loss_2d
 
@@ -206,7 +213,7 @@ class MOSNet(nn.Module):
         return loss, loss_2d, loss_3d
 
     def infer(self, xyzi_single, descartes_coord_single, sphere_coord_single, deep_128_res):
-        pred_cls, res0, res1, res2, deep_128_res = self.stage_forward(
+        pred_cls, aux0, aux1, aux2, deep_128_res = self.stage_forward(
             xyzi_single, descartes_coord_single, sphere_coord_single, deep_128_res
         )
         return pred_cls, deep_128_res

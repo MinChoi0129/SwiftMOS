@@ -13,21 +13,21 @@ def get_config():
         class Voxel:
             # 해상도
             descartes_shape = (512, 512, 30)
-            sphere_shape = (64, 2048, 60)
+            sphere_shape = (64, 2048, 64)
+            cylinder_shape = (64, 2048, 64)
+            polar_shape = (64, 2048, 30)
 
-            # 데이터 범위(Cartesian)
+            # 데이터 범위
             range_x = (-50.0, 50.0)
             range_y = (-50.0, 50.0)
             range_z = (-4.0, 2.0)
-
-            # 데이터 범위(Polar, Sphere, Cylinder 등)
             range_r = (2, 50)
             range_phi = (-180, 180)
             range_theta = (-25.0, 3.0)
 
     class DatasetParam:
         class Train:
-            num_workers = 3
+            num_workers = 4
             frame_point_num = 160000
             SeqDir = General.SeqDir
             Voxel = General.Voxel

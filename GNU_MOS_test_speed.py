@@ -34,22 +34,26 @@ def main(args, config):
     model.eval()
     model.cuda()
 
-    (
-        xyzi,  # [1, 3, 7, 160000, 1]
-        descartes_coord,  # [1, 3, 160000, 3, 1]
-        sphere_coord,  # [1, 3, 160000, 2, 1]
-        label,  # [1, 160000, 1]
-        bev_label,  # [1, 256, 256, 1]
-        valid_mask_list,
-        pad_length_list,
-        meta_list_raw,
-    ) = val_loader.next()
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total trainable parameters: {total_params}")
+
+    for _ in range(41):
+        (
+            xyzi,  # [1, 3, 7, 160000, 1]
+            descartes_coord,  # [1, 3, 160000, 3, 1]
+            sphere_coord,  # [1, 3, 160000, 2, 1]
+            label_3D,  # [1, 160000, 1]
+            label_2D,  # [1, H, W, 1]
+            valid_mask_list,
+            pad_length_list,
+            meta_list_raw,
+        ) = val_loader.next()
 
     xyzi = xyzi.cuda()
     descartes_coord = descartes_coord.cuda()
     sphere_coord = sphere_coord.cuda()
-    label = label.cuda()
-    bev_label = bev_label.cuda()
+    label_3D = label_3D.cuda()
+    label_2D = label_2D.cuda()
 
     pred_cls, deep_128_res = model.infer(xyzi, descartes_coord, sphere_coord, None)
     time_cost = []

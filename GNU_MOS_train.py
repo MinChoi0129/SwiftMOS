@@ -64,8 +64,8 @@ def train_one_epoch(epoch, end_epoch, model, train_loader, optimizer, scheduler,
         else enumerate(train_loader)
     )
 
-    for i, (xyzi, descartes_coord, sphere_coord, label, bev_label, meta_list_raw) in pbar:
-        loss, loss_2d, loss_3d = model(xyzi, descartes_coord, sphere_coord, label, bev_label)
+    for i, (xyzi, descartes_coord, sphere_coord, label_3D, label_2D, meta_list_raw) in pbar:
+        loss, loss_2d, loss_3d = model(xyzi, descartes_coord, sphere_coord, label_3D, label_2D)
 
         optimizer.zero_grad()
         loss.backward()
@@ -194,11 +194,10 @@ def main(args, config):
     except KeyboardInterrupt:
         print("Graceful Shutdown...")
 
-    else:
+    finally:
         if rank == 0:
             traceback.print_exc()
 
-    finally:
         if writer is not None:
             writer.close()
         torch.distributed.destroy_process_group()

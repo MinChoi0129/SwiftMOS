@@ -5,8 +5,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import deep_point
+from utils.pretty_print import shprint
 from . import backbone
-from utils.rv_bev import converters
+from networks.direct_view_converter import converters
 
 
 def VoxelMaxPool(pcds_feat, pcds_ind, output_size, scale_rate):
@@ -49,21 +50,21 @@ class MultiViewNetwork(nn.Module):
         super(MultiViewNetwork, self).__init__()
 
         # ----- Header -----
-        self.descartes_header = self._make_layer(backbone.BasicBlock, 192, 32, 2)
-        self.sphere_header = self._make_layer(backbone.BasicBlock, 32, 32, 1, stride=1)
-        self.header_channel_down = nn.Sequential(
+        self.descartes_l1 = self._make_layer(backbone.BasicBlock, 192, 32, 1)
+        self.sphere_l1 = self._make_layer(backbone.BasicBlock, 192, 32, 1)
+        self.l1_channel_down = nn.Sequential(
             nn.Conv2d(64, 32, 1, bias=False), nn.BatchNorm2d(32), nn.ReLU(inplace=True)
         )
 
         # ----- ResBlock1 -----
-        self.descartes_res1 = self._make_layer(backbone.BasicBlock, 32, 64, 3)
-        self.sphere_res1 = self._make_layer(backbone.BasicBlock, 64, 64, 2, stride=1)
-        self.res1_channel_down = nn.Sequential(
+        self.descartes_l2 = self._make_layer(backbone.BasicBlock, 32, 64, 2)
+        self.sphere_l2 = self._make_layer(backbone.BasicBlock, 32, 64, 2)
+        self.l2_channel_down = nn.Sequential(
             nn.Conv2d(128, 64, 1, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True)
         )
 
         # ----- ResBlock2 -----
-        self.descartes_res2 = self._make_layer(backbone.BasicBlock, 64, 128, 4)
+        self.descartes_l3 = self._make_layer(backbone.BasicBlock, 64, 128, 3)
 
         # ───────── Temporal fusion (Addition) ─────────
         self.add_fuse = nn.Sequential(
@@ -92,7 +93,10 @@ class MultiViewNetwork(nn.Module):
         save_dir = f"images/features/{variable_name}"
         os.makedirs(save_dir, exist_ok=True)
 
-        single_batch = variable[0].cpu().numpy()
+        try:
+            single_batch = variable[0].cpu().numpy()
+        except:
+            single_batch = variable[0].detach().cpu().numpy()
         for i, c in enumerate(single_batch):
             plt.imsave(f"{save_dir}/{i:06}.png", c)
 
@@ -122,7 +126,7 @@ class MultiViewNetwork(nn.Module):
 
         return VoxelMaxPool(
             pcds_feat=point,
-            pcds_ind=sph_coord_curr,
+            pcds_ind=sph_coord_curr[:, :, :2],
             output_size=(int(64 * scale_rate), int(2048 * scale_rate)),
             scale_rate=(scale_rate, scale_rate),
         )
@@ -135,12 +139,12 @@ class MultiViewNetwork(nn.Module):
 
         return VoxelMaxPool(
             pcds_feat=point,
-            pcds_ind=des_coord_curr,
+            pcds_ind=des_coord_curr[:, :, :2],
             output_size=(int(512 * scale_rate), int(512 * scale_rate)),
             scale_rate=(scale_rate, scale_rate),
         )
 
-    def forward(self, descartes_feat_in, descartes_coord_t_0, sphere_coord_t_0, deep_128_res):
+    def forward(self, descartes_feat_in, sphere_feat_in, descartes_coord_t_0, sphere_coord_t_0, deep_128_res):
         """
         descartes_feat_in : [BS, 192, 512, 512]
         descartes_coord_t_0 : [BS, 160000, 3, 1]
@@ -148,60 +152,52 @@ class MultiViewNetwork(nn.Module):
         deep_128_res : [BS, 128, 64, 64]
         """
 
-        """ Encoder """
+        is_direct = True
 
-        # Descartes Encoder 0 -> BEV to RV
-        # self.save_feature_as_img(descartes_feat_in, "descartes_feat_in")
-        des0 = self.descartes_header(descartes_feat_in)  # (BS, C=32, H=256, W=256)
-        # self.save_feature_as_img(des0, "des0")
-        des0_as_sph = self.des_2_sph_direct(des0)  # (BS, C=32, H=32, W=1024)
-        # self.save_feature_as_img(des0_as_sph, "des0_as_sph")
+        """Encoder"""
+        des1 = self.descartes_l1(descartes_feat_in)  # (BS, C=32, H=256, W=256)
+        sph1 = self.sphere_l1(sphere_feat_in)  # (BS, C=32, H=32, W=1024)
 
-        # Spherical Encoder 0 -> RV to BEV
-        sph0 = self.sphere_header(des0_as_sph)  # (BS, C=32, H=32, W=1024)
-        # self.save_feature_as_img(sph0, "sph0")
-        sph0_as_des = self.sph_2_des_direct(sph0)  # (BS, C=32, H=256, W=256)
-        # self.save_feature_as_img(sph0_as_des, "sph0_as_des")
+        if is_direct:
+            sph1_as_des = self.sph_2_des_direct(sph1)  # (BS, C=32, H=256, W=256)
+        else:
+            sph1_as_des = self.sph_2_des(sph1, sphere_coord_t_0, descartes_coord_t_0)  # (BS, C=32, H=256, W=256)
 
-        # Concatenate BEV and Spherical -> Channel Down
-        des0 = torch.cat((des0, sph0_as_des), dim=1)  # (BS, C=64, H=256, W=256)
-        des0 = self.header_channel_down(des0)  # (BS, C=32, H=256, W=256)
-        # self.save_feature_as_img(des0, "des0_concated")
+        l1_concat = torch.cat((des1, sph1_as_des), dim=1)  # (BS, C=64, H=256, W=256)
+        l2_des_in = self.l1_channel_down(l1_concat)  # (BS, C=32, H=256, W=256)
 
-        # Descartes Encoder 1 -> BEV to RV
-        des1 = self.descartes_res1(des0)  # (BS, C=64, H=128, W=128)
-        des1_as_sph = self.des_2_sph_direct(des1)  # (BS, C=64, H=16, W=512)
+        des2 = self.descartes_l2(l2_des_in)  # (BS, C=64, H=128, W=128)
+        sph2 = self.sphere_l2(sph1)  # (BS, C=64, H=16, W=512)
 
-        # Spherical Encoder 1 -> RV to BEV
-        sph1 = self.sphere_res1(des1_as_sph)  # (BS, C=64, H=16, W=512)
-        sph1_as_des = self.sph_2_des_direct(sph1)  # (BS, C=64, H=128, W=128)
+        if is_direct:
+            sph2_as_des = self.sph_2_des_direct(sph2)  # (BS, C=64, H=128, W=128)
+        else:
+            sph2_as_des = self.sph_2_des(sph2, sphere_coord_t_0, descartes_coord_t_0)  # (BS, C=64, H=128, W=128)
 
-        # Concatenate BEV and Spherical -> Channel Down
-        des1 = torch.cat((des1, sph1_as_des), dim=1)  # (BS, C=128, H=128, W=128)
-        des1 = self.res1_channel_down(des1)  # (BS, C=64, H=128, W=128)
+        l2_concat = torch.cat((des2, sph2_as_des), dim=1)  # (BS, C=128, H=128, W=128)
+        l3_des_in = self.l2_channel_down(l2_concat)  # (BS, C=64, H=128, W=128)
 
-        # Descartes Encoder 2
-        des2 = self.descartes_res2(des1)  # (BS, C=128, H=64, W=64)
+        des3 = self.descartes_l3(l3_des_in)  # (BS, C=128, H=64, W=64)
 
-        # Temporal fusion
+        """Temporal fusion"""
         if deep_128_res is not None:
-            fused = des2 + deep_128_res  # (BS, C=128, H=64, W=64)
-            des2 = self.add_fuse(fused)  # (BS, C=128, H=64, W=64)
+            fused = des3 + deep_128_res  # (BS, C=128, H=64, W=64)
+            des3 = self.add_fuse(fused)  # (BS, C=128, H=64, W=64)
 
-        # Decoder
-        out_size = des0.size()[2:]
-        res0 = F.interpolate(des0, size=out_size, mode="bilinear", align_corners=True)  # (BS, C=32, H=256, W=256)
-        res1 = F.interpolate(des1, size=out_size, mode="bilinear", align_corners=True)  # (BS, C=64, H=256, W=256)
-        res2 = F.interpolate(des2, size=out_size, mode="bilinear", align_corners=True)  # (BS, C=128, H=256, W=256)
+        """Decoder"""
+        out_size = des1.size()[2:]
+        res1 = F.interpolate(des1, size=out_size, mode="bilinear", align_corners=True)  # (BS, C=32, H=256, W=256)
+        res2 = F.interpolate(des2, size=out_size, mode="bilinear", align_corners=True)  # (BS, C=64, H=256, W=256)
+        res3 = F.interpolate(des3, size=out_size, mode="bilinear", align_corners=True)  # (BS, C=128, H=256, W=256)
 
-        # Predictions (ChannelFused, ChannelSeparated)
-        des_out = self.out_conv2(self.out_conv1(torch.cat([res0, res1, res2], dim=1)))  # (BS, C=64, H=256, W=256)
-        res0 = self.aux_head1(res0)  # (BS, C=3, H=256, W=256)
-        res1 = self.aux_head2(res1)  # (BS, C=3, H=256, W=256)
-        res2 = self.aux_head3(res2)  # (BS, C=3, H=256, W=256)
+        """Predictions"""
+        des_out = self.out_conv2(self.out_conv1(torch.cat([res1, res2, res3], dim=1)))  # (BS, C=64, H=256, W=256)
+        aux1 = self.aux_head1(res1)  # (BS, C=3, H=256, W=256)
+        aux2 = self.aux_head2(res2)  # (BS, C=3, H=256, W=256)
+        aux3 = self.aux_head3(res3)  # (BS, C=3, H=256, W=256)
 
-        # 2-D → 3-D
+        """Backprojection"""
         des_out_as_point = grid_2_point_scale_05(des_out, descartes_coord_t_0)  # (BS, C=64, N=160000, S=1)
-        sph1_as_point = grid_2_point_scale_025(sph1, sphere_coord_t_0)  # (BS, C=64, N=160000, S=1)
+        sph_out_as_point = grid_2_point_scale_05(sph1, sphere_coord_t_0)  # (BS, C=64, N=160000, S=1)
 
-        return des_out_as_point, sph1_as_point, res0, res1, res2, des2
+        return des_out_as_point, sph_out_as_point, aux1, aux2, aux3, des3
