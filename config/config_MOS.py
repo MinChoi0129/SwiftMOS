@@ -13,8 +13,8 @@ def get_config():
         class Voxel:
             # 해상도
             descartes_shape = (512, 512, 30)
-            sphere_shape = (64, 2048, 64)
-            cylinder_shape = (64, 2048, 64)
+            sphere_shape = (64, 2048, 30)
+            cylinder_shape = (64, 2048, 30)
             polar_shape = (64, 2048, 30)
 
             # 데이터 범위
@@ -81,7 +81,7 @@ def get_config():
             rv_grid2point = dict(type="BilinearSample", scale_rate=(1.0, 0.5))
 
         class pretrain:
-            pretrain_epoch = 46  # 이 숫자까지 학습했다고 가정함. 즉 +1 한 Epoch을 이어서 시작할 것임.
+            pretrain_epoch = 50  # 이 숫자까지 학습했다고 가정함. 즉 +1 한 Epoch을 이어서 시작할 것임.
 
     class OptimizeParam:
         class optimizer:
@@ -94,7 +94,7 @@ def get_config():
         class schedule:
             type = "step"
             begin_epoch = 0
-            end_epoch = 50
+            end_epoch = 80
             pct_start = 0.01
             final_lr = 1e-6
             step = 10

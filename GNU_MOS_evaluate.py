@@ -47,7 +47,7 @@ def val(epoch, model, val_loader, category_list, save_path, writer, save_label=T
 
     f = open(os.path.join(save_path, "val_log.txt"), "a")
     with torch.no_grad():
-        deep_128_res = None
+        temporal_res = None
         for (
             xyzi,
             descartes_coord,
@@ -58,8 +58,8 @@ def val(epoch, model, val_loader, category_list, save_path, writer, save_label=T
             pad_length_list,
             meta_list_raw,
         ) in tqdm.tqdm(val_loader):
-            pred_cls, deep_128_res = model.infer(
-                xyzi.cuda(), descartes_coord.cuda(), sphere_coord.cuda(), deep_128_res
+            pred_cls, temporal_res = model.infer(
+                xyzi.cuda(), descartes_coord.cuda(), sphere_coord.cuda(), temporal_res
             )
             pred_cls = F.softmax(pred_cls[0].squeeze(-1), dim=0).T.contiguous()  # 160000, 3
             label = label[0, :, 0].contiguous()  # 160000,
@@ -105,7 +105,7 @@ def test(model, test_loader, save_path):
     model.eval()
 
     with torch.no_grad():
-        deep_128_res = None
+        temporal_res = None
         for (
             xyzi,
             descartes_coord,
@@ -114,8 +114,8 @@ def test(model, test_loader, save_path):
             pad_length_list,
             meta_list_raw,
         ) in tqdm.tqdm(test_loader):
-            pred_cls, deep_128_res = model.infer(
-                xyzi.cuda(), descartes_coord.cuda(), sphere_coord.cuda(), deep_128_res
+            pred_cls, temporal_res = model.infer(
+                xyzi.cuda(), descartes_coord.cuda(), sphere_coord.cuda(), temporal_res
             )
             pred_cls = F.softmax(pred_cls[0].squeeze(-1), dim=0).T.contiguous()  # 160000, 3
 

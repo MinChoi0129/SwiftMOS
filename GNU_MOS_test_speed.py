@@ -1,5 +1,6 @@
 import os
 import warnings
+from matplotlib import pyplot as plt
 import numpy as np
 import torch
 import argparse
@@ -31,36 +32,45 @@ def main(args, config):
 
     # define model
     model = MainNetwork.MOSNet(pModel)
+    model_epoch = 50
+    FRAME = 41
+    pretrain_model = os.path.join(model_prefix, "{}-checkpoint.pth".format(model_epoch))
+    print("pretrain_model:", pretrain_model)
+    model.load_state_dict(torch.load(pretrain_model, map_location="cpu")["model_state_dict"])
+
     model.eval()
     model.cuda()
 
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total trainable parameters: {total_params}")
 
-    for _ in range(41):
-        (
-            xyzi,  # [1, 3, 7, 160000, 1]
-            descartes_coord,  # [1, 3, 160000, 3, 1]
-            sphere_coord,  # [1, 3, 160000, 2, 1]
-            label_3D,  # [1, 160000, 1]
-            label_2D,  # [1, H, W, 1]
-            valid_mask_list,
-            pad_length_list,
-            meta_list_raw,
-        ) = val_loader.next()
+    (
+        xyzi,
+        descartes_coord,
+        sphere_coord,
+        label_3D,
+        label_2D,
+        valid_mask_list,
+        pad_length_list,
+        meta_list_raw,
+    ) = val_dataset[FRAME]
 
-    xyzi = xyzi.cuda()
-    descartes_coord = descartes_coord.cuda()
-    sphere_coord = sphere_coord.cuda()
-    label_3D = label_3D.cuda()
-    label_2D = label_2D.cuda()
+    xyzi = xyzi.cuda().unsqueeze(0)
+    descartes_coord = descartes_coord.cuda().unsqueeze(0)
+    sphere_coord = sphere_coord.cuda().unsqueeze(0)
 
-    pred_cls, deep_128_res = model.infer(xyzi, descartes_coord, sphere_coord, None)
+    print(xyzi.shape, descartes_coord.shape, sphere_coord.shape)
+
+    # label_2D : [256, 256, 1] -> viridis 컬러맵으로 저장
+    arr = label_2D.cpu().numpy().squeeze()  # shape: [256, 256]
+    plt.imsave("images/features/label_2D.png", arr, cmap="viridis")
+
+    pred_cls, temporal_res = model.infer(xyzi, descartes_coord, sphere_coord, None)
     time_cost = []
     with torch.no_grad():
         for i in tqdm.tqdm(range(1000)):
             start = time.time()
-            pred_cls, deep_128_res = model.infer(xyzi, descartes_coord, sphere_coord, deep_128_res)
+            pred_cls, temporal_res = model.infer(xyzi, descartes_coord, sphere_coord, temporal_res)
             torch.cuda.synchronize()
             end = time.time()
             print((end - start) * 1000, "ms")

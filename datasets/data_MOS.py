@@ -5,6 +5,7 @@ import yaml
 import deep_point
 from . import utils, copy_paste
 import os
+import random
 
 
 def VoxelMaxPool(pcds_feat, pcds_ind, output_size, scale_rate):
@@ -151,6 +152,11 @@ class DataloadTrain(Dataset):
         if rank == 0:
             print("[Info] Static-Reduced Training Samples: ", len(self.flist))
 
+        # 데이터 샘플링으로 flist 크기 줄이기
+        # self.sample_flist()
+        # if rank == 0:
+        #     print("[Info] After Sampling Training Samples: ", len(self.flist))
+
     def remove_few_static_frames(self):
         remove_mapping_path = "config/train_split_dynamic_pointnumber.txt"
 
@@ -179,6 +185,26 @@ class DataloadTrain(Dataset):
 
         self.flist = new_flist
 
+    def sample_flist(self):
+        """flist를 샘플링해서 크기를 줄이는 메서드"""
+        # 설정에서 샘플링 비율 가져오기
+        sample_ratio = 0.5
+
+        original_size = len(self.flist)
+        target_size = int(original_size * sample_ratio)
+
+        # 랜덤 샘플링
+        random.seed(42)  # 재현성을 위한 시드 설정
+        sampled_indices = random.sample(range(original_size), target_size)
+
+        # 샘플링된 인덱스로 새로운 flist 생성
+        new_flist = [self.flist[i] for i in sampled_indices]
+        self.flist = new_flist
+
+        rank = int(os.environ["LOCAL_RANK"])
+        if rank == 0:
+            print(f"📊 데이터 샘플링 완료: {original_size} → {len(self.flist)} (비율: {sample_ratio:.1%})")
+
     def form_batch(self, pcds_total):
         pcds_total = self.aug(pcds_total)
 
@@ -192,8 +218,6 @@ class DataloadTrain(Dataset):
             range_z=self.Voxel.range_z,
             size=self.Voxel.descartes_shape,
         )
-
-        other_mode = "sphere"
 
         if other_mode == "sphere":
             pcds_sphere_coord = utils.SphereQuantize(
@@ -416,8 +440,6 @@ class DataloadVal(Dataset):
             range_z=self.Voxel.range_z,
             size=self.Voxel.descartes_shape,
         )
-
-        other_mode = "sphere"
 
         if other_mode == "sphere":
             pcds_sphere_coord = utils.SphereQuantize(

@@ -1,1 +1,1 @@
-from . import backbone, multi_view_network
+from . import MultiViewNetwork, backbone
