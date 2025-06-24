@@ -32,11 +32,11 @@ def main(args, config):
 
     # define model
     model = MainNetwork.MOSNet(pModel)
-    model_epoch = 50
+    model_epoch = 29
     FRAME = 41
-    pretrain_model = os.path.join(model_prefix, "{}-checkpoint.pth".format(model_epoch))
-    print("pretrain_model:", pretrain_model)
-    model.load_state_dict(torch.load(pretrain_model, map_location="cpu")["model_state_dict"])
+    # pretrain_model = os.path.join(model_prefix, "{}-checkpoint.pth".format(model_epoch))
+    # print("pretrain_model:", pretrain_model)
+    # model.load_state_dict(torch.load(pretrain_model, map_location="cpu")["model_state_dict"])
 
     model.eval()
     model.cuda()
@@ -63,6 +63,8 @@ def main(args, config):
 
     # label_2D : [256, 256, 1] -> viridis 컬러맵으로 저장
     arr = label_2D.cpu().numpy().squeeze()  # shape: [256, 256]
+    if not os.path.exists("images/features"):
+        os.makedirs("images/features")
     plt.imsave("images/features/label_2D.png", arr, cmap="viridis")
 
     pred_cls, temporal_res = model.infer(xyzi, descartes_coord, sphere_coord, None)

@@ -139,7 +139,7 @@ class MOSNet(nn.Module):
     def _build_network(self):
         self.point_pre = backbone.PointNetStacker(7, 64, pre_bn=True, stack_num=2)
         self.multi_view_network = MultiViewNetwork.MultiViewNetwork()
-        self.point_post = CatFusion([64, 64, 32], 64)
+        self.point_post = CatFusion([64, 64, 64], 64)
         self.pred_layer = backbone.PredBranch(64, 3)
 
     def stage_forward(self, xyzi, descartes_coord, sphere_coord, temporal_res):
@@ -169,7 +169,7 @@ class MOSNet(nn.Module):
 
         (
             des_out_as_point,  # (BS, 64, 160000, 1)
-            sph_out_as_point,  # (BS, 32, 160000, 1)
+            sph_out_as_point,  # (BS, 64, 160000, 1)
             aux1,  # (BS, 3, 256, 256)
             aux2,  # (BS, 3, 256, 256)
             aux3,  # (BS, 3, 256, 256)

@@ -131,9 +131,7 @@ class MultiViewNetwork(nn.Module):
             scale_rate=(Hb / 512, Wb / 512),
         ).view(BS, -1, Hb, Wb)
 
-        # self.save_feature_as_img(bev_z_in, "14-bev_z_in")
-
-        return converters["BEV2RV"][Hb](bev_feat, bev_z_in)
+        return converters["BEV2RV"][Hb](bev_feat, bev_z_in), bev_z_in
 
     def sph_2_des_2d2d(self, rv_feat, sphere_coord_t_0):
         """
@@ -150,9 +148,7 @@ class MultiViewNetwork(nn.Module):
             scale_rate=(Hr / 64, Wr / 2048),
         ).view(BS, -1, Hr, Wr)
 
-        # self.save_feature_as_img(sph_range_in, "15-sph_range_in")
-
-        return converters["RV2BEV"][Hr](rv_feat, sph_range_in)
+        return converters["RV2BEV"][Hr](rv_feat, sph_range_in), sph_range_in
 
     def des_2_sph_2d3d2d(self, des, des_coord_curr, sph_coord_curr):
         BS, C, H, W = des.shape
@@ -189,42 +185,56 @@ class MultiViewNetwork(nn.Module):
         """
 
         is_direct = True
+        save_image = False
 
         """Encoder"""
 
         ## Layer-1 ##
         des1 = self.descartes_l1(descartes_feat_in)  # (BS, C=32, H=256, W=256)
-        des1_as_sph = self.transform_view(des1, des_coord_t0, sph_coord_t0, is_direct)  # (BS, C=32, H=32, W=1024)
+        des1_as_sph, des1_bev_z_in = self.transform_view(
+            des1, des_coord_t0, sph_coord_t0, is_direct
+        )  # (BS, C=32, H=32, W=1024)
         sph1 = self.sphere_l1(des1_as_sph)  # (BS, C=32, H=32, W=1024)
-        sph1_as_des = self.transform_view(sph1, des_coord_t0, sph_coord_t0, is_direct)  # (BS, C=32, H=256, W=256)
+        sph1_as_des, sph1_bev_z_in = self.transform_view(
+            sph1, des_coord_t0, sph_coord_t0, is_direct
+        )  # (BS, C=32, H=256, W=256)
         l1_concat = torch.cat((des1, sph1_as_des), dim=1)  # (BS, C=64, H=256, W=256)
         l1_fused = self.l1_channel_down(l1_concat)  # (BS, C=32, H=256, W=256)
 
         ## Layer-2 ##
         des2 = self.descartes_l2(l1_fused)  # (BS, C=64, H=128, W=128)
-        des2_as_sph = self.transform_view(des2, des_coord_t0, sph_coord_t0, is_direct)  # (BS, C=64, H=16, W=512)
+        des2_as_sph, des2_bev_z_in = self.transform_view(
+            des2, des_coord_t0, sph_coord_t0, is_direct
+        )  # (BS, C=64, H=16, W=512)
         sph2 = self.sphere_l2(des2_as_sph)  # (BS, C=64, H=16, W=512)
-        sph2_as_des = self.transform_view(sph2, des_coord_t0, sph_coord_t0, is_direct)  # (BS, C=64, H=128, W=128)
+        sph2_as_des, sph2_bev_z_in = self.transform_view(
+            sph2, des_coord_t0, sph_coord_t0, is_direct
+        )  # (BS, C=64, H=128, W=128)
         l2_concat = torch.cat((des2, sph2_as_des), dim=1)  # (BS, C=128, H=128, W=128)
         l2_fused = self.l2_channel_down(l2_concat)  # (BS, C=64, H=128, W=128)
 
         # Layer-3 ##
         des3 = self.descartes_l3(l2_fused)  # (BS, C=128, H=64, W=64)
 
-        # self.save_feature_as_img(des1, "1-des1")
-        # self.save_feature_as_img(des1_as_sph, "2-des1_as_sph")
-        # self.save_feature_as_img(sph1, "3-sph1")
-        # self.save_feature_as_img(sph1_as_des, "4-sph1_as_des")
-        # self.save_feature_as_img(l1_concat, "5-l1_concat")
-        # self.save_feature_as_img(l1_fused, "6-l1_fused")
-        # self.save_feature_as_img(des2, "7-des2")
-        # self.save_feature_as_img(des2_as_sph, "8-des2_as_sph")
-        # self.save_feature_as_img(sph2, "9-sph2")
-        # self.save_feature_as_img(sph2_as_des, "10-sph2_as_des")
-        # self.save_feature_as_img(l2_concat, "11-l2_concat")
-        # self.save_feature_as_img(l2_fused, "12-l2_fused")
-        # self.save_feature_as_img(des3, "13-des3")
-        # raise Exception("stop")
+        if save_image:
+            self.save_feature_as_img(des1, "1-des1")
+            self.save_feature_as_img(des1_as_sph, "2-des1_as_sph")
+            self.save_feature_as_img(sph1, "3-sph1")
+            self.save_feature_as_img(sph1_as_des, "4-sph1_as_des")
+            self.save_feature_as_img(l1_concat, "5-l1_concat")
+            self.save_feature_as_img(l1_fused, "6-l1_fused")
+            self.save_feature_as_img(des2, "7-des2")
+            self.save_feature_as_img(des2_as_sph, "8-des2_as_sph")
+            self.save_feature_as_img(sph2, "9-sph2")
+            self.save_feature_as_img(sph2_as_des, "10-sph2_as_des")
+            self.save_feature_as_img(l2_concat, "11-l2_concat")
+            self.save_feature_as_img(l2_fused, "12-l2_fused")
+            self.save_feature_as_img(des3, "13-des3")
+            self.save_feature_as_img(des1_bev_z_in, "14-des1_bev_z_in")
+            self.save_feature_as_img(sph1_bev_z_in, "15-sph1_bev_z_in")
+            self.save_feature_as_img(des2_bev_z_in, "16-des2_bev_z_in")
+            self.save_feature_as_img(sph2_bev_z_in, "17-sph2_bev_z_in")
+            raise Exception("stop")
 
         """Temporal fusion"""
         if temporal_res is not None:
@@ -245,6 +255,6 @@ class MultiViewNetwork(nn.Module):
 
         """Backprojection"""
         des_out_as_point = grid_2_point_scale_05(des_out, des_coord_t0)  # (BS, C=64, N=160000, S=1)
-        sph_out_as_point = grid_2_point_scale_05(sph1, sph_coord_t0)  # (BS, C=32, N=160000, S=1)
+        sph_out_as_point = grid_2_point_scale_025(sph2, sph_coord_t0)  # (BS, C=64, N=160000, S=1)
 
         return des_out_as_point, sph_out_as_point, aux1, aux2, aux3, des3
