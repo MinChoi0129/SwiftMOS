@@ -27,7 +27,7 @@ $ source ~/.bashrc
 
 $ apt-get update -y
 $ apt install -y git vim unzip wget vim git dpkg build-essential
-$ apt-get install -y libgl1-mesa-glx libglib2.0-0 libxcb-cursor0 x11-apps
+$ apt install -y libgl1-mesa-glx libglib2.0-0 libxcb-cursor0 x11-apps libglib2.0-0
 
 $ conda create -n swiftmos python=3.8
 $ conda activate swiftmos
@@ -44,6 +44,7 @@ cd SwiftMOS
 ##### 2.2 Install more packages
 ```bash
 pip install torch==1.9.1+cu111 torchvision==0.10.1+cu111 torchaudio==0.9.1 -f https://download.pytorch.org/whl/torch_stable.html
+pip install --no-index torch-scatter -f https://pytorch-geometric.com/whl/torch-1.9.1+cu111.html
 
 pip install -r requirements.txt
 

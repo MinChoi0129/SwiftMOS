@@ -63,7 +63,7 @@ class DataloadTrain(Dataset):
         self.frame_point_num = config.frame_point_num
         self.Voxel = config.Voxel
         with open("datasets/semantic-kitti.yaml", "r") as f:
-            self.task_cfg = yaml.load(f)
+            self.task_cfg = yaml.load(f, Loader=yaml.FullLoader)
 
         self.cp_aug = None
         if config.CopyPasteAug.is_use:

@@ -5,5 +5,6 @@ os/
 **.nfs*
 deep_point/build
 deep_point/deep_point.egg-info
+deep_point/dist
 val_results*
 semantic-kitti-api/
