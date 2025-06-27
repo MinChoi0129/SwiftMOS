@@ -115,11 +115,11 @@ After every single epoch in the training session, you can see metrics like Movin
 
 If you want to save the label, you can just run the `5.2 Evaluation Process` below.
 
-##### 5.2 Evaluate Process(save prediction labels)
+##### 5.2 Evaluate Process
+This process saves prediction labels. Just comment '--save-label' if you don't want to.
 
 ```bash
-bash scripts/validate_save_label.sh
-bash eval_for_paper.sh
+bash scripts/validate.sh
 ```
 
 ##### 5.3 Measuring Average Model Inference Time
