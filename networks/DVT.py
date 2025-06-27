@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch_scatter import scatter
+from torch_scatter import scatter, scatter_max
 from config.config_MOS import get_config
 
 general_config, dataset_param_config, model_param_config, optimize_param_config = get_config()
@@ -69,6 +69,8 @@ class RV2BEV(nn.Module):
             bev[b] = flat.view(C, self.H_b, self.W_b)
         return bev
 
+
+"""z 하나 남는 거 약함"""
 
 # class BEV2RV(nn.Module):
 #     """
@@ -168,124 +170,218 @@ class RV2BEV(nn.Module):
 #         return rv
 
 
-class BEV2RV(nn.Module):
-    """
-    BEV feature  →  RV feature
-      • 부동소수 / 정수 입력 모두 지원
-      • z_low〜z_hint 구간을 동일 값으로 '수직 채우기'
-      • φ 보간·복잡한 반복 제거 → 메모리·연산량 최소
-    """
+""" 잘 되긴한데 좀 느림 """
 
+
+# class BEV2RV(nn.Module):
+#     """
+#     BEV feature  →  RV feature
+#       • 부동소수 / 정수 입력 모두 지원
+#       • z_low〜z_hint 구간을 동일 값으로 '수직 채우기'
+#       • φ 보간·복잡한 반복 제거 → 메모리·연산량 최소
+#     """
+
+#     def __init__(
+#         self,
+#         bev_size=(512, 512),
+#         rv_size=(64, 2048),
+#         z_range=(-4.0, 2.0),
+#         z_bins=30,
+#         z_low=-1.73,
+#         fov_phi=(math.radians(-180), math.radians(180)),
+#         fov_theta=(math.radians(-25), math.radians(3)),
+#         range_xy=(-50.0, 50.0, -50.0, 50.0),
+#     ):
+#         super().__init__()
+
+#         # ───────── basic params ─────────
+#         self.H_b, self.W_b = bev_size
+#         self.H_r, self.W_r = rv_size
+#         self.z_min, self.z_max = z_range
+#         self.z_bins = z_bins
+#         self.z_low = z_low
+#         self.phi_min, self.phi_max = fov_phi
+#         self.theta_min, self.theta_max = fov_theta
+#         self.xmin, self.xmax, self.ymin, self.ymax = range_xy
+
+#         # ───────── pre-compute BEV grids ─────────
+#         y_lin = torch.linspace(self.ymax, self.ymin, self.H_b)  # row(y) : top → bottom
+#         x_lin = torch.linspace(self.xmin, self.xmax, self.W_b)  # col(x) : left → right
+#         yg, xg = torch.meshgrid(y_lin, x_lin)  # 1.9.1 기본 'ij'
+
+#         self.register_buffer("xg", xg)  # (H_b,W_b)
+#         self.register_buffer("yg", yg)  # (H_b,W_b)
+
+#         rho = torch.sqrt(xg**2 + yg**2)  # (H_b,W_b)
+#         self.register_buffer("rho", rho.flatten())  # (N,)
+
+#         phi_center = torch.atan2(yg, xg)  # (H_b,W_b)
+#         self.register_buffer("phi_center", phi_center.flatten())  # (N,)
+
+#         # θ 값(행)  : z_low ↔ row_low
+#         z_low_tensor = torch.full_like(self.rho, z_low)  # (N,)  ← Tensor 로 변환
+#         theta_low = torch.atan2(z_low_tensor, self.rho)  # (N,)
+
+#         row_low = (self.theta_max - theta_low) / (self.theta_max - self.theta_min) * (self.H_r - 1)
+#         row_low = row_low.round().clamp(0, self.H_r - 1).long()
+#         self.register_buffer("row_low", row_low)  # (N,)
+
+#         # φ → col (한 칸만 사용)
+#         col_flat = (self.phi_center - self.phi_min) / (self.phi_max - self.phi_min) * (self.W_r - 1)
+#         col_flat = col_flat.round().clamp(0, self.W_r - 1).long()
+#         self.register_buffer("col_flat", col_flat)  # (N,)
+
+#     # ───────────────────────────────────────────────────────────────
+#     @torch.no_grad()
+#     def forward(
+#         self,
+#         bev_feat: torch.Tensor,  # (B,C,H_b,W_b)
+#         bev_z_bin: torch.Tensor,  # (B,1,H_b,W_b)
+#         chunk: int = 8192,  # 픽셀 청크 크기
+#     ) -> torch.Tensor:
+#         B, C, _, _ = bev_feat.shape
+#         device, dtype = bev_feat.device, bev_feat.dtype
+
+#         # z-bin  →  z_hint
+#         dz = (self.z_max - self.z_min) / self.z_bins
+#         z_hint = bev_z_bin.squeeze(1).float() * dz + (self.z_min + dz / 2)  # (B,H_b,W_b)
+
+#         rho = self.rho.to(device)  # (N,)
+#         col_flat = self.col_flat.to(device)  # (N,)
+#         row_low = self.row_low.to(device)  # (N,)
+#         N = rho.numel()
+
+#         # dtype-별 초기값
+#         if torch.is_floating_point(bev_feat):
+#             init_val = -float("inf")
+#         else:
+#             init_val = torch.iinfo(dtype).min
+
+#         rv = torch.full((B, C, self.H_r, self.W_r), init_val, dtype=dtype, device=device)
+
+#         # ───────── batch loop ─────────
+#         for b in range(B):
+#             bev_flat = bev_feat[b].view(C, -1).contiguous()  # (C,N)
+#             z_max_flat = z_hint[b].flatten()  # (N,)
+
+#             # θ_high (각 BEV 픽셀)
+#             theta_high = torch.atan2(z_max_flat, rho)  # (N,)
+#             row_high = (self.theta_max - theta_high) / (self.theta_max - self.theta_min) * (self.H_r - 1)
+#             row_high = row_high.round().clamp(0, self.H_r - 1).long()  # (N,)
+
+#             row_start = torch.min(row_low, row_high)
+#             row_end = torch.max(row_low, row_high)
+
+#             # θ 행(0~H_r-1) 루프
+#             for r in range(self.H_r):
+#                 mask = (row_start <= r) & (r <= row_end)
+#                 if not mask.any():
+#                     continue
+
+#                 idx_all = torch.nonzero(mask, as_tuple=False).squeeze(1)
+#                 for s in range(0, idx_all.numel(), chunk):
+#                     sel = idx_all[s : s + chunk]
+
+#                     tgt_idx = col_flat[sel] + r * self.W_r  # (sel_len,)
+#                     src_val = bev_flat[:, sel]  # (C, sel_len)
+
+#                     rv[b].view(C, -1)[:] = scatter(
+#                         src_val, tgt_idx.unsqueeze(0).expand(C, -1), dim=1, out=rv[b].view(C, -1), reduce="max"
+#                     )
+
+#         # 초기값 → 0
+#         rv.masked_fill_(rv == init_val, 0)
+#         return rv
+
+
+""" 좀 더 빠른가? """
+
+
+class BEV2RV(nn.Module):
     def __init__(
         self,
         bev_size=(512, 512),
         rv_size=(64, 2048),
-        z_range=(-4.0, 2.0),
+        z_range=(-4, 2),
         z_bins=30,
         z_low=-1.73,
         fov_phi=(math.radians(-180), math.radians(180)),
         fov_theta=(math.radians(-25), math.radians(3)),
-        range_xy=(-50.0, 50.0, -50.0, 50.0),
+        range_xy=(-50, 50, -50, 50),
     ):
         super().__init__()
-
-        # ───────── basic params ─────────
         self.H_b, self.W_b = bev_size
         self.H_r, self.W_r = rv_size
-        self.z_min, self.z_max = z_range
-        self.z_bins = z_bins
-        self.z_low = z_low
+        self.z_min, self.z_max, self.z_bins, self.z_low = *z_range, z_bins, z_low
         self.phi_min, self.phi_max = fov_phi
         self.theta_min, self.theta_max = fov_theta
         self.xmin, self.xmax, self.ymin, self.ymax = range_xy
 
-        # ───────── pre-compute BEV grids ─────────
-        y_lin = torch.linspace(self.ymax, self.ymin, self.H_b)  # row(y) : top → bottom
-        x_lin = torch.linspace(self.xmin, self.xmax, self.W_b)  # col(x) : left → right
-        yg, xg = torch.meshgrid(y_lin, x_lin)  # 1.9.1 기본 'ij'
+        # ─ BEV → polar 상수
+        y = torch.linspace(self.ymax, self.ymin, self.H_b)
+        x = torch.linspace(self.xmin, self.xmax, self.W_b)
+        yg, xg = torch.meshgrid(y, x)
+        rho = torch.sqrt(xg**2 + yg**2).flatten()  # (N,)
+        phi = torch.atan2(yg, xg).flatten()  # (N,)
 
-        self.register_buffer("xg", xg)  # (H_b,W_b)
-        self.register_buffer("yg", yg)  # (H_b,W_b)
+        theta_low = torch.atan2(torch.full_like(rho, self.z_low), rho)
+        row_low = (
+            ((self.theta_max - theta_low) / (self.theta_max - self.theta_min) * (self.H_r - 1))
+            .round()
+            .clamp(0, self.H_r - 1)
+            .long()
+        )
+        col = (
+            ((phi - self.phi_min) / (self.phi_max - self.phi_min) * (self.W_r - 1))
+            .round()
+            .clamp(0, self.W_r - 1)
+            .long()
+        )
 
-        rho = torch.sqrt(xg**2 + yg**2)  # (H_b,W_b)
-        self.register_buffer("rho", rho.flatten())  # (N,)
-
-        phi_center = torch.atan2(yg, xg)  # (H_b,W_b)
-        self.register_buffer("phi_center", phi_center.flatten())  # (N,)
-
-        # θ 값(행)  : z_low ↔ row_low
-        z_low_tensor = torch.full_like(self.rho, z_low)  # (N,)  ← Tensor 로 변환
-        theta_low = torch.atan2(z_low_tensor, self.rho)  # (N,)
-
-        row_low = (self.theta_max - theta_low) / (self.theta_max - self.theta_min) * (self.H_r - 1)
-        row_low = row_low.round().clamp(0, self.H_r - 1).long()
+        self.register_buffer("rho", rho)  # (N,)
         self.register_buffer("row_low", row_low)  # (N,)
+        self.register_buffer("col_flat", col)  # (N,)
 
-        # φ → col (한 칸만 사용)
-        col_flat = (self.phi_center - self.phi_min) / (self.phi_max - self.phi_min) * (self.W_r - 1)
-        col_flat = col_flat.round().clamp(0, self.W_r - 1).long()
-        self.register_buffer("col_flat", col_flat)  # (N,)
-
-    # ───────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------
     @torch.no_grad()
-    def forward(
-        self,
-        bev_feat: torch.Tensor,  # (B,C,H_b,W_b)
-        bev_z_bin: torch.Tensor,  # (B,1,H_b,W_b)
-        chunk: int = 8192,  # 픽셀 청크 크기
-    ) -> torch.Tensor:
+    def forward(self, bev_feat: torch.Tensor, bev_z_bin: torch.Tensor, chunk: int = 65536) -> torch.Tensor:
         B, C, _, _ = bev_feat.shape
         device, dtype = bev_feat.device, bev_feat.dtype
-
-        # z-bin  →  z_hint
-        dz = (self.z_max - self.z_min) / self.z_bins
-        z_hint = bev_z_bin.squeeze(1).float() * dz + (self.z_min + dz / 2)  # (B,H_b,W_b)
-
-        rho = self.rho.to(device)  # (N,)
-        col_flat = self.col_flat.to(device)  # (N,)
-        row_low = self.row_low.to(device)  # (N,)
+        rho, row_low, col_flat = (t.to(device) for t in (self.rho, self.row_low, self.col_flat))
         N = rho.numel()
+        dz = (self.z_max - self.z_min) / self.z_bins
+        z_hint = bev_z_bin.squeeze(1).float().to(device) * dz + (self.z_min + dz / 2)
 
-        # dtype-별 초기값
-        if torch.is_floating_point(bev_feat):
-            init_val = -float("inf")
-        else:
-            init_val = torch.iinfo(dtype).min
+        init = -float("inf") if torch.is_floating_point(bev_feat) else torch.iinfo(dtype).min
+        rv = torch.full((B, C, self.H_r, self.W_r), init, dtype=dtype, device=device)
 
-        rv = torch.full((B, C, self.H_r, self.W_r), init_val, dtype=dtype, device=device)
+        for b in range(B):  # 배치만 for
+            bev_flat = bev_feat[b].view(C, N).contiguous()  # (C,N)
+            theta_hi = torch.atan2(z_hint[b].flatten(), rho)
+            row_hi = (
+                ((self.theta_max - theta_hi) / (self.theta_max - self.theta_min) * (self.H_r - 1))
+                .round()
+                .clamp(0, self.H_r - 1)
+                .long()
+            )
+            row_s, row_e = torch.min(row_low, row_hi), torch.max(row_low, row_hi)
 
-        # ───────── batch loop ─────────
-        for b in range(B):
-            bev_flat = bev_feat[b].view(C, -1).contiguous()  # (C,N)
-            z_max_flat = z_hint[b].flatten()  # (N,)
+            rv_flat = rv[b].view(C, -1)  # 캐시
 
-            # θ_high (각 BEV 픽셀)
-            theta_high = torch.atan2(z_max_flat, rho)  # (N,)
-            row_high = (self.theta_max - theta_high) / (self.theta_max - self.theta_min) * (self.H_r - 1)
-            row_high = row_high.round().clamp(0, self.H_r - 1).long()  # (N,)
-
-            row_start = torch.min(row_low, row_high)
-            row_end = torch.max(row_low, row_high)
-
-            # θ 행(0~H_r-1) 루프
+            # ─ θ 행 루프 64회 (GPU-kernel 64개) ─
             for r in range(self.H_r):
-                mask = (row_start <= r) & (r <= row_end)
-                if not mask.any():
+                within = (row_s <= r) & (r <= row_e)
+                if not within.any():
                     continue
+                idx = torch.nonzero(within, as_tuple=False).squeeze(1)
 
-                idx_all = torch.nonzero(mask, as_tuple=False).squeeze(1)
-                for s in range(0, idx_all.numel(), chunk):
-                    sel = idx_all[s : s + chunk]
+                # 한 행 전체 → 한 번의 scatter
+                tgt = col_flat[idx] + r * self.W_r  # (M,)
+                src = bev_flat[:, idx]  # (C,M)
 
-                    tgt_idx = col_flat[sel] + r * self.W_r  # (sel_len,)
-                    src_val = bev_flat[:, sel]  # (C, sel_len)
+                rv_flat[:] = scatter(src, tgt.unsqueeze(0).expand(C, -1), dim=1, out=rv_flat, reduce="max")
 
-                    rv[b].view(C, -1)[:] = scatter(
-                        src_val, tgt_idx.unsqueeze(0).expand(C, -1), dim=1, out=rv[b].view(C, -1), reduce="max"
-                    )
-
-        # 초기값 → 0
-        rv.masked_fill_(rv == init_val, 0)
+        rv.masked_fill_(rv == init, 0)
         return rv
 
 
