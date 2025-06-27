@@ -255,6 +255,6 @@ class MultiViewNetwork(nn.Module):
 
         """Backprojection"""
         des_out_as_point = grid_2_point_scale_05(des_out, des_coord_t0)  # (BS, C=64, N=160000, S=1)
-        sph_out_as_point = grid_2_point_scale_025(sph2, sph_coord_t0)  # (BS, C=64, N=160000, S=1)
+        sph_out_as_point = grid_2_point_scale_05(sph1, sph_coord_t0)  # (BS, C=32, N=160000, S=1)
 
         return des_out_as_point, sph_out_as_point, aux1, aux2, aux3, des3

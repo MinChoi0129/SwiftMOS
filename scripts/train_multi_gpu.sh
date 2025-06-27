@@ -9,5 +9,5 @@ NumGPUs=4
 python3 -m torch.distributed.run \
     --nproc_per_node=$NumGPUs GNU_MOS_train.py \
     --config $ConfigPath \
-    --start_validating_epoch 0
-    # --keep_training
+    --start_validating_epoch 0 \
+    --keep_training

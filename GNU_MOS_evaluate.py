@@ -183,7 +183,7 @@ def main(args, config):
                 batch_size=1,
                 shuffle=False,
                 num_workers=pDataset.Test.num_workers,
-                pin_memory=True,
+                pin_memory=False,
             )
 
             model = MainNetwork.MOSNet(pModel)

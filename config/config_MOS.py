@@ -81,7 +81,7 @@ def get_config():
             rv_grid2point = dict(type="BilinearSample", scale_rate=(1.0, 0.5))
 
         class pretrain:
-            pretrain_epoch = 24  # 이 숫자까지 학습했다고 가정함. 즉 +1 한 Epoch을 이어서 시작할 것임.
+            pretrain_epoch = 39  # 이 숫자까지 학습했다고 가정함. 즉 +1 한 Epoch을 이어서 시작할 것임.
 
     class OptimizeParam:
         class optimizer:
