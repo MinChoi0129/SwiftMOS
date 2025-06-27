@@ -1,6 +1,6 @@
 import torch, argparse, random, sys, traceback, warnings, logging, tqdm, importlib, os
 import numpy as np
-from GNU_MOS_evaluate import val
+from SwiftMOS_evaluate import val
 from networks import MainNetwork
 from utils.logger import config_logger
 from torch.utils.tensorboard import SummaryWriter
@@ -195,9 +195,6 @@ def main(args, config):
         print("Graceful Shutdown...")
 
     finally:
-        if rank == 0:
-            traceback.print_exc()
-
         if writer is not None:
             writer.close()
         torch.distributed.destroy_process_group()

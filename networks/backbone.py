@@ -170,16 +170,7 @@ class CSAtt(nn.Module):
 
 
 class BasicConv2d(nn.Module):
-    def __init__(
-        self,
-        in_planes,
-        out_planes,
-        kernel_size,
-        stride=1,
-        padding=0,
-        dilation=1,
-        relu=True,
-    ):
+    def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=0, dilation=1, relu=True):
         super(BasicConv2d, self).__init__()
         self.relu = relu
         self.conv = nn.Conv2d(
@@ -473,25 +464,12 @@ class BilinearSample(nn.Module):
         self.scale_rate = scale_rate
 
     def forward(self, grid_feat, grid_coord):
-        """
-        Input:
-            grid_feat, (BS, C, H, W)
-            grid_coord, (BS, N, 2, S)
-        Output:
-            pc_feat, (BS, C, N, S)
-        """
         H = grid_feat.shape[2]
         W = grid_feat.shape[3]
 
-        grid_sample_x = (2 * grid_coord[:, :, 1] * self.scale_rate[1] / (W - 1)) - 1  # (BS, N, S)
-        grid_sample_y = (2 * grid_coord[:, :, 0] * self.scale_rate[0] / (H - 1)) - 1  # (BS, N, S)
+        grid_sample_x = (2 * grid_coord[:, :, 1] * self.scale_rate[1] / (W - 1)) - 1
+        grid_sample_y = (2 * grid_coord[:, :, 0] * self.scale_rate[0] / (H - 1)) - 1
 
-        grid_sample_2 = torch.stack((grid_sample_x, grid_sample_y), dim=-1)  # (BS, N, S, 2)
-        pc_feat = F.grid_sample(
-            grid_feat,
-            grid_sample_2,
-            mode="bilinear",
-            padding_mode="zeros",
-            align_corners=True,
-        )  # (BS, C, N, S)
+        grid_sample_2 = torch.stack((grid_sample_x, grid_sample_y), dim=-1)
+        pc_feat = F.grid_sample(grid_feat, grid_sample_2, mode="bilinear", padding_mode="zeros", align_corners=True)
         return pc_feat

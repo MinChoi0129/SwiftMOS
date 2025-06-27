@@ -8,6 +8,7 @@ import deep_point
 from utils.pretty_print import shprint
 from . import backbone
 from networks.DVT import converters
+import numpy as np
 
 
 def VoxelMaxPool(pcds_feat, pcds_ind, output_size, scale_rate):
@@ -24,7 +25,6 @@ def VoxelMaxPool(pcds_feat, pcds_ind, output_size, scale_rate):
 VoxelMaxPool : 두번째 파라미터가 갖는 값 quan 기준 W/H * scale_rate = output_size.
 BilinearSample : 두번째 파라미터가 갖는 값 quan 기준 W/H가 첫번째 파라미터로 되기 위한 scale_rate.
 """
-
 
 grid_2_point_scale_full = backbone.BilinearSample((1.0, 1.0))
 grid_2_point_scale_05 = backbone.BilinearSample((0.5, 0.5))
@@ -52,16 +52,12 @@ class MultiViewNetwork(nn.Module):
         # ----- Header -----
         self.descartes_l1 = self._make_layer(backbone.BasicBlock, 192, 32, 2)
         self.sphere_l1 = self._make_layer(backbone.BasicBlock, 32, 32, 1, stride=1)
-        self.l1_channel_down = nn.Sequential(
-            nn.Conv2d(64, 32, 1, bias=False), nn.BatchNorm2d(32), nn.ReLU(inplace=True)
-        )
+        self.l1_channel_down = nn.Sequential(nn.Conv2d(64, 32, 1, bias=False), nn.BatchNorm2d(32), nn.ReLU(inplace=True))
 
         # ----- ResBlock1 -----
         self.descartes_l2 = self._make_layer(backbone.BasicBlock, 32, 64, 3)
         self.sphere_l2 = self._make_layer(backbone.BasicBlock, 64, 64, 2, stride=1)
-        self.l2_channel_down = nn.Sequential(
-            nn.Conv2d(128, 64, 1, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True)
-        )
+        self.l2_channel_down = nn.Sequential(nn.Conv2d(128, 64, 1, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True))
 
         # ----- ResBlock2 -----
         self.descartes_l3 = self._make_layer(backbone.BasicBlock, 64, 128, 4)
@@ -89,9 +85,7 @@ class MultiViewNetwork(nn.Module):
         return nn.Sequential(*layer)
 
     @staticmethod
-    def save_feature_as_img(variable, variable_name):
-        import numpy as np
-
+    def save_feature_as_img(variable, variable_name, channel_pool="mean"):
         save_dir = f"images/features"
         os.makedirs(save_dir, exist_ok=True)
 
@@ -100,9 +94,14 @@ class MultiViewNetwork(nn.Module):
         except:
             single_batch = variable[0].detach().cpu().numpy()
 
-        # 채널 평균을 계산해서 하나의 이미지로 저장
-        channel_mean = np.mean(single_batch, axis=0)
-        plt.imsave(f"{save_dir}/{variable_name}.png", channel_mean)
+        if channel_pool == "mean":
+            channel_mean = np.mean(single_batch, axis=0)
+            plt.imsave(f"{save_dir}/{variable_name}.png", channel_mean)
+        elif channel_pool == "max":
+            channel_max = np.max(single_batch, axis=0)
+            plt.imsave(f"{save_dir}/{variable_name}.png", channel_max)
+        else:
+            raise ValueError(f"Invalid channel_pool value: {channel_pool}")
 
     def transform_view(self, feat, des_coord, sph_coord, is_direct):
         if feat.shape[2] == feat.shape[3]:  # square(from : BEV)
@@ -117,11 +116,6 @@ class MultiViewNetwork(nn.Module):
                 return self.sph_2_des_2d3d2d(feat, sph_coord, des_coord)
 
     def des_2_sph_2d2d(self, bev_feat, descartes_coord_t_0):
-        """
-        BEV → RV direct max-pool
-        bev_feat: (B, C, Hb, Wb)
-        descartes_coord_t_0: (B, 160000, 3, 1)
-        """
         BS, C, Hb, Wb = bev_feat.shape
 
         bev_z_in = VoxelMaxPool(
@@ -134,11 +128,6 @@ class MultiViewNetwork(nn.Module):
         return converters["BEV2RV"][Hb](bev_feat, bev_z_in), bev_z_in
 
     def sph_2_des_2d2d(self, rv_feat, sphere_coord_t_0):
-        """
-        RV → BEV direct max‐pool
-        rv_feat : (B, C, Hr, Wr)
-        sphere_coord_t_0 : (B, 160000, 3, 1)
-        """
         BS, C, Hr, Wr = rv_feat.shape
 
         sph_range_in = VoxelMaxPool(
@@ -191,25 +180,17 @@ class MultiViewNetwork(nn.Module):
 
         ## Layer-1 ##
         des1 = self.descartes_l1(descartes_feat_in)  # (BS, C=32, H=256, W=256)
-        des1_as_sph, des1_bev_z_in = self.transform_view(
-            des1, des_coord_t0, sph_coord_t0, is_direct
-        )  # (BS, C=32, H=32, W=1024)
+        des1_as_sph, des1_bev_z_in = self.transform_view(des1, des_coord_t0, sph_coord_t0, is_direct)  # (BS, C=32, H=32, W=1024)
         sph1 = self.sphere_l1(des1_as_sph)  # (BS, C=32, H=32, W=1024)
-        sph1_as_des, sph1_bev_z_in = self.transform_view(
-            sph1, des_coord_t0, sph_coord_t0, is_direct
-        )  # (BS, C=32, H=256, W=256)
+        sph1_as_des, sph1_bev_z_in = self.transform_view(sph1, des_coord_t0, sph_coord_t0, is_direct)  # (BS, C=32, H=256, W=256)
         l1_concat = torch.cat((des1, sph1_as_des), dim=1)  # (BS, C=64, H=256, W=256)
         l1_fused = self.l1_channel_down(l1_concat)  # (BS, C=32, H=256, W=256)
 
         ## Layer-2 ##
         des2 = self.descartes_l2(l1_fused)  # (BS, C=64, H=128, W=128)
-        des2_as_sph, des2_bev_z_in = self.transform_view(
-            des2, des_coord_t0, sph_coord_t0, is_direct
-        )  # (BS, C=64, H=16, W=512)
+        des2_as_sph, des2_bev_z_in = self.transform_view(des2, des_coord_t0, sph_coord_t0, is_direct)  # (BS, C=64, H=16, W=512)
         sph2 = self.sphere_l2(des2_as_sph)  # (BS, C=64, H=16, W=512)
-        sph2_as_des, sph2_bev_z_in = self.transform_view(
-            sph2, des_coord_t0, sph_coord_t0, is_direct
-        )  # (BS, C=64, H=128, W=128)
+        sph2_as_des, sph2_bev_z_in = self.transform_view(sph2, des_coord_t0, sph_coord_t0, is_direct)  # (BS, C=64, H=128, W=128)
         l2_concat = torch.cat((des2, sph2_as_des), dim=1)  # (BS, C=128, H=128, W=128)
         l2_fused = self.l2_channel_down(l2_concat)  # (BS, C=64, H=128, W=128)
 
@@ -254,7 +235,10 @@ class MultiViewNetwork(nn.Module):
         aux3 = self.aux_head3(res3)  # (BS, C=3, H=256, W=256)
 
         """Backprojection"""
-        des_out_as_point = grid_2_point_scale_05(des_out, des_coord_t0)  # (BS, C=64, N=160000, S=1)
-        sph_out_as_point = grid_2_point_scale_05(sph1, sph_coord_t0)  # (BS, C=32, N=160000, S=1)
+        _, des_grid_to_point = descartes_scale_rates[des_out.shape[2]]
+        _, sph_grid_to_point = sphere_scale_rates[sph1.shape[2]]
+
+        des_out_as_point = des_grid_to_point(des_out, des_coord_t0)  # (BS, C=64, N=160000, S=1)
+        sph_out_as_point = sph_grid_to_point(sph1, sph_coord_t0)  # (BS, C=32, N=160000, S=1)
 
         return des_out_as_point, sph_out_as_point, aux1, aux2, aux3, des3

@@ -67,9 +67,7 @@ class DataloadTrain(Dataset):
 
         self.cp_aug = None
         if config.CopyPasteAug.is_use:
-            self.cp_aug = copy_paste.SequenceCutPaste(
-                config.CopyPasteAug.ObjBackDir, config.CopyPasteAug.paste_max_obj_num
-            )
+            self.cp_aug = copy_paste.SequenceCutPaste(config.CopyPasteAug.ObjBackDir, config.CopyPasteAug.paste_max_obj_num)
 
         self.aug = utils.DataAugment(
             noise_mean=config.AugParam.noise_mean,
@@ -161,7 +159,7 @@ class DataloadTrain(Dataset):
         remove_mapping_path = "config/train_split_dynamic_pointnumber.txt"
 
         if not os.path.exists(remove_mapping_path):
-            print(f"⚠️ {remove_mapping_path} 파일이 없어 제거 과정을 건너뜁니다.")
+            print(f"{remove_mapping_path} 파일이 없어 제거 과정을 건너뜁니다.")
             return
 
         with open(remove_mapping_path, "r") as f:
@@ -194,7 +192,6 @@ class DataloadTrain(Dataset):
         target_size = int(original_size * sample_ratio)
 
         # 랜덤 샘플링
-        random.seed(42)  # 재현성을 위한 시드 설정
         sampled_indices = random.sample(range(original_size), target_size)
 
         # 샘플링된 인덱스로 새로운 flist 생성
@@ -203,7 +200,7 @@ class DataloadTrain(Dataset):
 
         rank = int(os.environ["LOCAL_RANK"])
         if rank == 0:
-            print(f"📊 데이터 샘플링 완료: {original_size} → {len(self.flist)} (비율: {sample_ratio:.1%})")
+            print(f"데이터 샘플링 완료: {original_size} → {len(self.flist)} (비율: {sample_ratio:.1%})")
 
     def form_batch(self, pcds_total):
         pcds_total = self.aug(pcds_total)
@@ -219,46 +216,23 @@ class DataloadTrain(Dataset):
             size=self.Voxel.descartes_shape,
         )
 
-        if other_mode == "sphere":
-            pcds_sphere_coord = utils.SphereQuantize(
-                pcds_xyzi,
-                phi_range=self.Voxel.range_phi,
-                theta_range=self.Voxel.range_theta,
-                r_range=self.Voxel.range_r,
-                size=self.Voxel.sphere_shape,
-            )
-            pcds_other_than_descartes = pcds_sphere_coord
-        elif other_mode == "cylinder":
-            pcds_cylinder_coord = utils.CylinderQuantize(
-                pcds_xyzi,
-                phi_range=self.Voxel.range_phi,
-                z_range=self.Voxel.range_z,
-                r_range=self.Voxel.range_r,
-                size=self.Voxel.cylinder_shape,
-            )
-            pcds_other_than_descartes = pcds_cylinder_coord
-        elif other_mode == "polar":
-            pcds_polar_coord = utils.PolarQuantize(
-                pcds_xyzi,
-                phi_range=self.Voxel.range_phi,
-                r_range=self.Voxel.range_r,
-                size=self.Voxel.polar_shape,
-            )
-            pcds_other_than_descartes = pcds_polar_coord
+        pcds_sphere_coord = utils.SphereQuantize(
+            pcds_xyzi,
+            phi_range=self.Voxel.range_phi,
+            theta_range=self.Voxel.range_theta,
+            r_range=self.Voxel.range_r,
+            size=self.Voxel.sphere_shape,
+        )
 
         # make feature
         pcds_xyzi = make_point_feat(pcds_xyzi, pcds_descartes_coord)
         pcds_xyzi = torch.FloatTensor(pcds_xyzi.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
         pcds_xyzi = pcds_xyzi.permute(0, 2, 1, 3).contiguous()
 
-        pcds_descartes_coord = torch.FloatTensor(pcds_descartes_coord.astype(np.float32)).view(
-            self.config.seq_num, N, -1, 1
-        )
-        pcds_other_than_descartes = torch.FloatTensor(pcds_other_than_descartes.astype(np.float32)).view(
-            self.config.seq_num, N, -1, 1
-        )
+        pcds_descartes_coord = torch.FloatTensor(pcds_descartes_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
+        pcds_sphere_coord = torch.FloatTensor(pcds_sphere_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
 
-        return pcds_xyzi, pcds_descartes_coord, pcds_other_than_descartes
+        return pcds_xyzi, pcds_descartes_coord, pcds_sphere_coord
 
     def form_seq(self, meta_list):
         pc_list = []
@@ -441,46 +415,23 @@ class DataloadVal(Dataset):
             size=self.Voxel.descartes_shape,
         )
 
-        if other_mode == "sphere":
-            pcds_sphere_coord = utils.SphereQuantize(
-                pcds_xyzi,
-                phi_range=self.Voxel.range_phi,
-                theta_range=self.Voxel.range_theta,
-                r_range=self.Voxel.range_r,
-                size=self.Voxel.sphere_shape,
-            )
-            pcds_other_than_descartes = pcds_sphere_coord
-        elif other_mode == "cylinder":
-            pcds_cylinder_coord = utils.CylinderQuantize(
-                pcds_xyzi,
-                phi_range=self.Voxel.range_phi,
-                z_range=self.Voxel.range_z,
-                r_range=self.Voxel.range_r,
-                size=self.Voxel.cylinder_shape,
-            )
-            pcds_other_than_descartes = pcds_cylinder_coord
-        elif other_mode == "polar":
-            pcds_polar_coord = utils.PolarQuantize(
-                pcds_xyzi,
-                phi_range=self.Voxel.range_phi,
-                r_range=self.Voxel.range_r,
-                size=self.Voxel.polar_shape,
-            )
-            pcds_other_than_descartes = pcds_polar_coord
+        pcds_sphere_coord = utils.SphereQuantize(
+            pcds_xyzi,
+            phi_range=self.Voxel.range_phi,
+            theta_range=self.Voxel.range_theta,
+            r_range=self.Voxel.range_r,
+            size=self.Voxel.sphere_shape,
+        )
 
         # make feature
         pcds_xyzi = make_point_feat(pcds_xyzi, pcds_descartes_coord)
         pcds_xyzi = torch.FloatTensor(pcds_xyzi.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
         pcds_xyzi = pcds_xyzi.permute(0, 2, 1, 3).contiguous()
 
-        pcds_descartes_coord = torch.FloatTensor(pcds_descartes_coord.astype(np.float32)).view(
-            self.config.seq_num, N, -1, 1
-        )
-        pcds_other_than_descartes = torch.FloatTensor(pcds_other_than_descartes.astype(np.float32)).view(
-            self.config.seq_num, N, -1, 1
-        )
+        pcds_descartes_coord = torch.FloatTensor(pcds_descartes_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
+        pcds_sphere_coord = torch.FloatTensor(pcds_sphere_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
 
-        return pcds_xyzi, pcds_descartes_coord, pcds_other_than_descartes
+        return pcds_xyzi, pcds_descartes_coord, pcds_sphere_coord
 
     def form_seq(self, meta_list):
         pc_list = []
@@ -625,46 +576,23 @@ class DataloadTest(Dataset):
             size=self.Voxel.descartes_shape,
         )
 
-        if other_mode == "sphere":
-            pcds_sphere_coord = utils.SphereQuantize(
-                pcds_xyzi,
-                phi_range=self.Voxel.range_phi,
-                theta_range=self.Voxel.range_theta,
-                r_range=self.Voxel.range_r,
-                size=self.Voxel.sphere_shape,
-            )
-            pcds_other_than_descartes = pcds_sphere_coord
-        elif other_mode == "cylinder":
-            pcds_cylinder_coord = utils.CylinderQuantize(
-                pcds_xyzi,
-                phi_range=self.Voxel.range_phi,
-                z_range=self.Voxel.range_z,
-                r_range=self.Voxel.range_r,
-                size=self.Voxel.cylinder_shape,
-            )
-            pcds_other_than_descartes = pcds_cylinder_coord
-        elif other_mode == "polar":
-            pcds_polar_coord = utils.PolarQuantize(
-                pcds_xyzi,
-                phi_range=self.Voxel.range_phi,
-                r_range=self.Voxel.range_r,
-                size=self.Voxel.polar_shape,
-            )
-            pcds_other_than_descartes = pcds_polar_coord
+        pcds_sphere_coord = utils.SphereQuantize(
+            pcds_xyzi,
+            phi_range=self.Voxel.range_phi,
+            theta_range=self.Voxel.range_theta,
+            r_range=self.Voxel.range_r,
+            size=self.Voxel.sphere_shape,
+        )
 
         # make feature
         pcds_xyzi = make_point_feat(pcds_xyzi, pcds_descartes_coord)
         pcds_xyzi = torch.FloatTensor(pcds_xyzi.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
         pcds_xyzi = pcds_xyzi.permute(0, 2, 1, 3).contiguous()
 
-        pcds_descartes_coord = torch.FloatTensor(pcds_descartes_coord.astype(np.float32)).view(
-            self.config.seq_num, N, -1, 1
-        )
-        pcds_other_than_descartes = torch.FloatTensor(pcds_other_than_descartes.astype(np.float32)).view(
-            self.config.seq_num, N, -1, 1
-        )
+        pcds_descartes_coord = torch.FloatTensor(pcds_descartes_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
+        pcds_sphere_coord = torch.FloatTensor(pcds_sphere_coord.astype(np.float32)).view(self.config.seq_num, N, -1, 1)
 
-        return pcds_xyzi, pcds_descartes_coord, pcds_other_than_descartes
+        return pcds_xyzi, pcds_descartes_coord, pcds_sphere_coord
 
     def form_seq(self, meta_list):
         pc_list = []

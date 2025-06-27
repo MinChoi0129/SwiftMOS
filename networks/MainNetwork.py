@@ -10,7 +10,6 @@ from utils.criterion import CE_OHEM
 from utils.lovasz_losses import lovasz_softmax
 import open3d as o3d
 import yaml
-
 from utils.pretty_print import shprint
 
 
@@ -36,62 +35,54 @@ class MOSNet(nn.Module):
 
     @staticmethod
     def visualize_point_feature(pcds_xyzi, fused_point_feat, c=0):
-        """
-        현재 프레임의 point cloud를 open3d로 시각화 (특정 feature 채널로 색 입힘)
-        단, 원점에서 거리 0~50인 점만 시각화하며, 배경은 검정색으로 설정
-
-        Args:
-            pcds_xyzi: Tensor [BS, 3, 7, N, 1]
-            fused_point_feat: Tensor [BS, 64, N, 1]
-            c: int - 사용할 feature 채널 인덱스 (0~63)
-        """
         assert pcds_xyzi.shape[1] == 3, "입력은 최근 3프레임이어야 합니다."
         assert 0 <= c < fused_point_feat.shape[1], f"채널 c는 0~{fused_point_feat.shape[1]-1} 사이여야 함."
 
-        # 현재 프레임 정보만 추출 (t=0)
-        cur_pcd = pcds_xyzi[:, 0]  # [BS, 7, N, 1]
-        xyz = cur_pcd[:, :3, :, 0]  # [BS, 3, N]
-        feat = fused_point_feat[:, c, :, 0]  # [BS, N]
+        cur_pcd = pcds_xyzi[:, 0]
+        xyz = cur_pcd[:, :3, :, 0]
+        feat = fused_point_feat[:, c, :, 0]
 
-        # 배치 1개만 사용
-        xyz_np = xyz[0].permute(1, 0).cpu().numpy()  # [N, 3]
-        feat_np = feat[0].cpu().numpy()  # [N]
+        xyz_np = xyz[0].permute(1, 0).cpu().numpy()
+        feat_np = feat[0].cpu().numpy()
 
-        # 🔹 원점에서의 거리 계산 후 필터링
         dist = np.linalg.norm(xyz_np, axis=1)
         mask = (dist >= 0) & (dist <= 50)
 
         xyz_np = xyz_np[mask]
         feat_np = feat_np[mask]
 
-        # 색상 매핑
         norm_feat = (feat_np - feat_np.min()) / (feat_np.ptp() + 1e-8)
         colors = plt.cm.viridis(norm_feat)[:, :3]
 
-        # Open3D 포인트 클라우드
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(xyz_np)
         pcd.colors = o3d.utility.Vector3dVector(colors)
 
-        # 🔧 Visualizer 사용해서 배경 검정색으로
         vis = o3d.visualization.Visualizer()
         vis.create_window()
-        vis.get_render_option().background_color = np.array([0, 0, 0])  # 검정 배경
+        vis.get_render_option().background_color = np.array([0, 0, 0])
         vis.add_geometry(pcd)
         vis.run()
         vis.destroy_window()
 
     @staticmethod
-    def save_feature_as_img(variable, variable_name):
-        save_dir = f"images/features/{variable_name}"
+    def save_feature_as_img(variable, variable_name, channel_pool="mean"):
+        save_dir = f"images/features"
         os.makedirs(save_dir, exist_ok=True)
 
         try:
             single_batch = variable[0].cpu().numpy()
         except:
             single_batch = variable[0].detach().cpu().numpy()
-        for i, c in enumerate(single_batch):
-            plt.imsave(f"{save_dir}/{i:06}.png", c)
+
+        if channel_pool == "mean":
+            channel_mean = np.mean(single_batch, axis=0)
+            plt.imsave(f"{save_dir}/{variable_name}.png", channel_mean)
+        elif channel_pool == "max":
+            channel_max = np.max(single_batch, axis=0)
+            plt.imsave(f"{save_dir}/{variable_name}.png", channel_max)
+        else:
+            raise ValueError(f"Invalid channel_pool value: {channel_pool}")
 
     @staticmethod
     def save_label_as_img(variable, variable_name):
@@ -102,13 +93,9 @@ class MOSNet(nn.Module):
             single_batch = variable[0, :, :, 0].cpu().numpy()
         except:
             single_batch = variable[0, :, :, 0].detach().cpu().numpy()
-        print(np.unique(single_batch))  # 0, 1, 2 only
 
-        # float 값을 0~1 범위로 정규화
         normalized = (single_batch - single_batch.min()) / (single_batch.max() - single_batch.min() + 1e-8)
-
-        # 3채널 RGB 이미지로 변환 (viridis 컬러맵 사용)
-        colors = plt.cm.viridis(normalized)[:, :, :3]  # RGBA에서 RGB만 선택
+        colors = plt.cm.viridis(normalized)[:, :, :3]
 
         plt.imsave(f"{save_dir}/{variable_name}.png", colors)
 
@@ -121,7 +108,6 @@ class MOSNet(nn.Module):
         elif self.pModel.loss_mode == "ohem":
             self.criterion_seg_cate = CE_OHEM(top_ratio=0.2, top_weight=4.0, ignore_index=0)
         elif self.pModel.loss_mode == "wce":
-            # 가중치 CE
             content = torch.zeros(self.pModel.class_num, dtype=torch.float32)
             with open("datasets/semantic-kitti.yaml", "r") as f:
                 task_cfg = yaml.load(f)
@@ -162,7 +148,7 @@ class MOSNet(nn.Module):
             scale_rate=(1.0, 1.0),
         ).view(BS, -1, *self.descartes_shape[:2])
 
-        # t_0 시점 데이터(피처, c좌표, p좌표)
+        # t_0 시점 데이터(point피쳐, descartes좌표, sphere좌표)
         point_feats_t_0 = point_feats.view(BS, T, -1, N, 1)[:, 0].contiguous()  # (BS, 64, 160000, 1)
         descartes_coord_t_0 = descartes_coord[:, 0].contiguous()  # (BS, 160000, 3, 1)
         sphere_coord_t_0 = sphere_coord[:, 0].contiguous()  # (BS, 160000, 3, 1)
@@ -182,12 +168,10 @@ class MOSNet(nn.Module):
         return pred_cls, aux1, aux2, aux3, temporal_res
 
     def forward(self, xyzi_stages, descartes_coord_stages, sphere_coord_stages, label_3D_stages, label_2D_stages):
-        """Start 3-Stage Forwarding"""
         stage = 3
         losses, losses_2d, losses_3d = [], [], []
         temporal_res = None
         for i in range(stage):
-
             pred_cls, aux1, aux2, aux3, temporal_res = self.stage_forward(
                 xyzi_stages[:, i].contiguous(),
                 descartes_coord_stages[:, i].contiguous(),
@@ -222,6 +206,9 @@ class MOSNet(nn.Module):
 
     def infer(self, xyzi_single, descartes_coord_single, sphere_coord_single, temporal_res):
         pred_cls, aux1, aux2, aux3, temporal_res = self.stage_forward(
-            xyzi_single, descartes_coord_single, sphere_coord_single, temporal_res
+            xyzi_single,
+            descartes_coord_single,
+            sphere_coord_single,
+            temporal_res,
         )
         return pred_cls, temporal_res
