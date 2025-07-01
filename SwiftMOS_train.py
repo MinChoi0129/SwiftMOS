@@ -121,7 +121,7 @@ def main(args, config):
     rank = torch.distributed.get_rank()
 
     # 랜덤 시드 설정
-    seed = 42
+    seed = 3407
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -146,14 +146,10 @@ def main(args, config):
         log_dir = get_next_case_path(os.path.join(save_path, "logs"), tags=[])
         writer = SummaryWriter(log_dir=log_dir)
         logger.info("*" * 80)
-        logger.info(
-            "Total trainable parameters: " + str(sum(p.numel() for p in model.parameters() if p.requires_grad))
-        )
+        logger.info("Total trainable parameters: " + str(sum(p.numel() for p in model.parameters() if p.requires_grad)))
 
     # 시작 에포크 설정
-    start_epoch = set_starting_condition(
-        args, model_prefix, pModel, pOpt, base_net, optimizer, scheduler, rank, logger
-    )
+    start_epoch = set_starting_condition(args, model_prefix, pModel, pOpt, base_net, optimizer, scheduler, rank, logger)
 
     # ***************************************************************************************************** #
 

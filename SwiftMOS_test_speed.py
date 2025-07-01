@@ -32,17 +32,17 @@ def main(args, config):
 
     # define model
     model = MainNetwork.MOSNet(pModel)
-    model_epoch = 29
-    FRAME = 41
-    # pretrain_model = os.path.join(model_prefix, "{}-checkpoint.pth".format(model_epoch))
-    # print("pretrain_model:", pretrain_model)
-    # model.load_state_dict(torch.load(pretrain_model, map_location="cpu")["model_state_dict"])
-
-    model.eval()
-    model.cuda()
+    model_epoch = 60
+    FRAME = 42
+    pretrain_model = os.path.join(model_prefix, "{}-checkpoint.pth".format(model_epoch))
+    print("pretrain_model:", pretrain_model)
+    model.load_state_dict(torch.load(pretrain_model, map_location="cpu")["model_state_dict"])
 
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total trainable parameters: {total_params}")
+
+    model.eval()
+    model.cuda()
 
     (
         xyzi,

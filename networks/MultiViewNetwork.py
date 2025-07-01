@@ -145,11 +145,14 @@ class MultiViewNetwork(nn.Module):
         scale_rate, grid_to_point = descartes_scale_rates[H]
         point = grid_to_point(des, des_coord_curr)
 
-        return VoxelMaxPool(
-            pcds_feat=point,
-            pcds_ind=sph_coord_curr[:, :, :2],
-            output_size=(int(64 * scale_rate), int(2048 * scale_rate)),
-            scale_rate=(scale_rate, scale_rate),
+        return (
+            VoxelMaxPool(
+                pcds_feat=point,
+                pcds_ind=sph_coord_curr[:, :, :2],
+                output_size=(int(64 * scale_rate), int(2048 * scale_rate)),
+                scale_rate=(scale_rate, scale_rate),
+            ),
+            None,
         )
 
     def sph_2_des_2d3d2d(self, sph, sph_coord_curr, des_coord_curr):
@@ -158,11 +161,14 @@ class MultiViewNetwork(nn.Module):
         scale_rate, grid_to_point = sphere_scale_rates[H]
         point = grid_to_point(sph, sph_coord_curr)
 
-        return VoxelMaxPool(
-            pcds_feat=point,
-            pcds_ind=des_coord_curr[:, :, :2],
-            output_size=(int(512 * scale_rate), int(512 * scale_rate)),
-            scale_rate=(scale_rate, scale_rate),
+        return (
+            VoxelMaxPool(
+                pcds_feat=point,
+                pcds_ind=des_coord_curr[:, :, :2],
+                output_size=(int(512 * scale_rate), int(512 * scale_rate)),
+                scale_rate=(scale_rate, scale_rate),
+            ),
+            None,
         )
 
     def forward(self, descartes_feat_in, des_coord_t0, sph_coord_t0, temporal_res):
@@ -197,6 +203,23 @@ class MultiViewNetwork(nn.Module):
         # Layer-3 ##
         des3 = self.descartes_l3(l2_fused)  # (BS, C=128, H=64, W=64)
 
+        """Temporal fusion"""
+        if temporal_res is not None:
+            fused = des3 + temporal_res  # (BS, C=64, H=128, W=128)
+            des3 = self.add_fuse(fused)  # (BS, C=64, H=128, W=128)
+
+        """Decoder"""
+        out_size = des1.size()[2:]
+        res1 = F.interpolate(l1_fused, size=out_size, mode="bilinear", align_corners=True)  # (BS, C=32, H=256, W=256)
+        res2 = F.interpolate(l2_fused, size=out_size, mode="bilinear", align_corners=True)  # (BS, C=64, H=256, W=256)
+        res3 = F.interpolate(des3, size=out_size, mode="bilinear", align_corners=True)  # (BS, C=128, H=256, W=256)
+
+        """Predictions"""
+        des_out = self.out_conv2(self.out_conv1(torch.cat([res1, res2, res3], dim=1)))  # (BS, C=64, H=256, W=256)
+        aux1 = self.aux_head1(res1)  # (BS, C=3, H=256, W=256)
+        aux2 = self.aux_head2(res2)  # (BS, C=3, H=256, W=256)
+        aux3 = self.aux_head3(res3)  # (BS, C=3, H=256, W=256)
+
         if save_image:
             self.save_feature_as_img(des1, "1-des1")
             self.save_feature_as_img(des1_as_sph, "2-des1_as_sph")
@@ -215,24 +238,8 @@ class MultiViewNetwork(nn.Module):
             self.save_feature_as_img(sph1_bev_z_in, "15-sph1_bev_z_in")
             self.save_feature_as_img(des2_bev_z_in, "16-des2_bev_z_in")
             self.save_feature_as_img(sph2_bev_z_in, "17-sph2_bev_z_in")
+            self.save_feature_as_img(des_out, "18-des_out")
             raise Exception("stop")
-
-        """Temporal fusion"""
-        if temporal_res is not None:
-            fused = des3 + temporal_res  # (BS, C=64, H=128, W=128)
-            des3 = self.add_fuse(fused)  # (BS, C=64, H=128, W=128)
-
-        """Decoder"""
-        out_size = des1.size()[2:]
-        res1 = F.interpolate(l1_fused, size=out_size, mode="bilinear", align_corners=True)  # (BS, C=32, H=256, W=256)
-        res2 = F.interpolate(l2_fused, size=out_size, mode="bilinear", align_corners=True)  # (BS, C=64, H=256, W=256)
-        res3 = F.interpolate(des3, size=out_size, mode="bilinear", align_corners=True)  # (BS, C=128, H=256, W=256)
-
-        """Predictions"""
-        des_out = self.out_conv2(self.out_conv1(torch.cat([res1, res2, res3], dim=1)))  # (BS, C=64, H=256, W=256)
-        aux1 = self.aux_head1(res1)  # (BS, C=3, H=256, W=256)
-        aux2 = self.aux_head2(res2)  # (BS, C=3, H=256, W=256)
-        aux3 = self.aux_head3(res3)  # (BS, C=3, H=256, W=256)
 
         """Backprojection"""
         _, des_grid_to_point = descartes_scale_rates[des_out.shape[2]]
