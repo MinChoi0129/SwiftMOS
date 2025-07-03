@@ -2,8 +2,8 @@
 
 ConfigPath=config/config_MOS.py
 
-export CUDA_VISIBLE_DEVICES=0,2
-NumGPUs=2
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+NumGPUs=4
 
 python3 -m torch.distributed.run \
     --nproc_per_node=$NumGPUs SwiftMOS_train.py \

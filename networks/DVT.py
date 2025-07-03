@@ -65,88 +65,6 @@ class RV2BEV(nn.Module):
         return bev
 
 
-# class BEV2RV(nn.Module):
-#     def __init__(
-#         self,
-#         bev_size=(512, 512),
-#         rv_size=(64, 2048),
-#         z_range=(-4, 2),
-#         z_bins=30,
-#         z_low=-1.73,
-#         fov_phi=(math.radians(-180), math.radians(180)),
-#         fov_theta=(math.radians(-25), math.radians(3)),
-#         range_xy=(-50, 50, -50, 50),
-#     ):
-#         super().__init__()
-#         self.H_b, self.W_b = bev_size
-#         self.H_r, self.W_r = rv_size
-#         self.z_min, self.z_max, self.z_bins, self.z_low = *z_range, z_bins, z_low
-#         self.phi_min, self.phi_max = fov_phi
-#         self.theta_min, self.theta_max = fov_theta
-#         self.xmin, self.xmax, self.ymin, self.ymax = range_xy
-
-#         y = torch.linspace(self.ymax, self.ymin, self.H_b)
-#         x = torch.linspace(self.xmin, self.xmax, self.W_b)
-#         yg, xg = torch.meshgrid(y, x)
-#         rho = torch.sqrt(xg**2 + yg**2).flatten()
-#         phi = torch.atan2(yg, xg).flatten()
-
-#         theta_low = torch.atan2(torch.full_like(rho, self.z_low), rho)
-#         row_low = (
-#             ((self.theta_max - theta_low) / (self.theta_max - self.theta_min) * (self.H_r - 1))
-#             .round()
-#             .clamp(0, self.H_r - 1)
-#             .long()
-#         )
-#         col = ((phi - self.phi_min) / (self.phi_max - self.phi_min) * (self.W_r - 1)).round().clamp(0, self.W_r - 1).long()
-
-#         self.register_buffer("rho", rho)
-#         self.register_buffer("row_low", row_low)
-#         self.register_buffer("col_flat", col)
-
-#     @torch.no_grad()
-#     def forward(self, bev_feat, bev_z_bin, chunk=65536):
-#         B, C, _, _ = bev_feat.shape
-#         device, dtype = bev_feat.device, bev_feat.dtype
-#         rho, row_low, col_flat = (t.to(device) for t in (self.rho, self.row_low, self.col_flat))
-#         N = rho.numel()
-#         dz = (self.z_max - self.z_min) / self.z_bins
-#         z_hint = bev_z_bin.squeeze(1).float().to(device) * dz + (self.z_min + dz / 2)
-
-#         init = -float("inf") if torch.is_floating_point(bev_feat) else torch.iinfo(dtype).min
-#         rv = torch.full((B, C, self.H_r, self.W_r), init, dtype=dtype, device=device)
-
-#         for b in range(B):
-#             bev_flat = bev_feat[b].view(C, N).contiguous()
-#             theta_hi = torch.atan2(z_hint[b].flatten(), rho)
-#             row_hi = (
-#                 ((self.theta_max - theta_hi) / (self.theta_max - self.theta_min) * (self.H_r - 1))
-#                 .round()
-#                 .clamp(0, self.H_r - 1)
-#                 .long()
-#             )
-#             row_s, row_e = torch.min(row_low, row_hi), torch.max(row_low, row_hi)
-
-#             rv_flat = rv[b].view(C, -1)
-
-#             for r in range(self.H_r):
-#                 within = (row_s <= r) & (r <= row_e)
-#                 if not within.any():
-#                     continue
-#                 idx = torch.nonzero(within, as_tuple=False).squeeze(1)
-
-#                 tgt = col_flat[idx] + r * self.W_r
-#                 src = bev_flat[:, idx]
-
-#                 rv_flat[:] = scatter(src, tgt.unsqueeze(0).expand(C, -1), dim=1, out=rv_flat, reduce="max")
-
-#         rv.masked_fill_(rv == init, 0)
-#         return rv
-
-
-"""z 하나 남는 거 약함"""
-
-
 class BEV2RV(nn.Module):
     """
     LiDAR 센서 원점 기준 BEV → RV 변환
@@ -236,12 +154,6 @@ class BEV2RV(nn.Module):
 
             rv_flat = scatter(src, idx_flat.expand(C, -1), dim=1, dim_size=self.H_r * self.W_r, reduce="max")  # or "mean"
             rv[b] = rv_flat.view(C, self.H_r, self.W_r)
-
-        ################여기 아래 추가###################
-        # ───── 5) 전체 텐서 dilation ─────
-        dilate_iter = 3  # 필요 시 조정
-        for _ in range(dilate_iter):
-            rv = F.max_pool2d(rv, kernel_size=3, stride=1, padding=1)
 
         return rv
 

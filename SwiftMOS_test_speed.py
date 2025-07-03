@@ -32,17 +32,29 @@ def main(args, config):
 
     # define model
     model = MainNetwork.MOSNet(pModel)
-    model_epoch = 60
-    FRAME = 42
-    pretrain_model = os.path.join(model_prefix, "{}-checkpoint.pth".format(model_epoch))
-    print("pretrain_model:", pretrain_model)
-    model.load_state_dict(torch.load(pretrain_model, map_location="cpu")["model_state_dict"])
+    FRAME = 42  # looks good to visualize
 
+    # load pretrained model
+    use_pretrained_model = None
+    while True:
+        use_pretrained_model = input("use_pretrained_model? (y/n)").capitalize()
+        if use_pretrained_model == "Y":
+            break
+        elif use_pretrained_model == "N":
+            break
+        else:
+            print("Invalid input. Please enter 'y' or 'n'.")
+            continue
+
+    if use_pretrained_model == "Y":
+        model_epoch = 50
+        pretrain_model = os.path.join(model_prefix, "{}-checkpoint.pth".format(model_epoch))
+        print("pretrain_model:", pretrain_model)
+        model.load_state_dict(torch.load(pretrain_model, map_location="cpu")["model_state_dict"])
+
+    # print total trainable parameters
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total trainable parameters: {total_params}")
-
-    model.eval()
-    model.cuda()
 
     (
         xyzi,
@@ -59,14 +71,13 @@ def main(args, config):
     descartes_coord = descartes_coord.cuda().unsqueeze(0)
     sphere_coord = sphere_coord.cuda().unsqueeze(0)
 
-    print(xyzi.shape, descartes_coord.shape, sphere_coord.shape)
-
-    # label_2D : [256, 256, 1] -> viridis 컬러맵으로 저장
-    arr = label_2D.cpu().numpy().squeeze()  # shape: [256, 256]
+    arr = label_2D.cpu().numpy().squeeze()
     if not os.path.exists("images/features"):
         os.makedirs("images/features")
     plt.imsave("images/features/label_2D.png", arr, cmap="viridis")
 
+    model.eval()
+    model.cuda()
     pred_cls, temporal_res = model.infer(xyzi, descartes_coord, sphere_coord, None)
     time_cost = []
     with torch.no_grad():
