@@ -1,0 +1,52 @@
+FROM nvcr.io/nvidia/l4t-jetpack:r35.4.1
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    build-essential cmake ninja-build git \
+    libopenblas-dev libblas-dev \
+    libjpeg-dev libpng-dev python3-dev python3-distutils \
+    wget ca-certificates bzip2 \
+    python3-libnvinfer-dev python3-libnvinfer && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV CONDA_DIR=/opt/conda
+ENV PATH=${CONDA_DIR}/bin:${PATH}
+RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-py38_4.9.2-Linux-aarch64.sh -O /tmp/conda.sh && \
+    bash /tmp/conda.sh -b -p ${CONDA_DIR} && \
+    rm /tmp/conda.sh && \
+    conda update -y conda
+
+RUN conda create -y -n torch19 python=3.8 && conda clean -afy
+SHELL ["bash", "-lc"]
+RUN echo "conda activate torch19" >> ~/.bashrc
+
+RUN source $CONDA_DIR/etc/profile.d/conda.sh && \
+    conda activate torch19 && \
+    pip install --no-cache-dir \
+    "setuptools==59.5.0" wheel ninja \
+    pyyaml numpy typing_extensions future \
+    pycuda
+
+RUN source $CONDA_DIR/etc/profile.d/conda.sh && \
+    conda activate torch19 && \
+    git clone --branch v1.9.0 --depth 1 https://github.com/pytorch/pytorch.git /tmp/pytorch && \
+    cd /tmp/pytorch && \
+    git submodule sync && git submodule update --init --recursive && \
+    export USE_CUDA=1 \
+    TORCH_CUDA_ARCH_LIST="8.7" \
+    MAX_JOBS=$(nproc) \
+    BUILD_CAFFE2=0 \
+    USE_CAFFE2_OPS=0 \
+    USE_CAFFE2=0 && \
+    python setup.py bdist_wheel
+
+RUN source $CONDA_DIR/etc/profile.d/conda.sh && \
+    conda activate torch19 && \
+    pip install /tmp/pytorch/dist/*.whl && \
+    rm -rf /tmp/pytorch
+
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64
+ENV TENSORRT_ROOT=/usr/lib/aarch64-linux-gnu
+ENV PYTHONPATH=$PYTHONPATH:$TENSORRT_ROOT/python3
+
+WORKDIR /workspace

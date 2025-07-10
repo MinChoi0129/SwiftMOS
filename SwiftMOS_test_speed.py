@@ -1,17 +1,18 @@
+import argparse
+import importlib
 import os
+import time
 import warnings
-from matplotlib import pyplot as plt
+
 import numpy as np
 import torch
-import argparse
-import time
-from torch.utils.data import DataLoader
-import tqdm
-import importlib
 import torch.backends.cudnn as cudnn
+import tqdm
+from matplotlib import pyplot as plt
+from torch.utils.data import DataLoader
+
 import datasets
 from networks import MainNetwork
-
 
 cudnn.benchmark = True
 cudnn.enabled = True
@@ -37,7 +38,9 @@ def main(args, config):
     # load pretrained model
     use_pretrained_model = None
     while True:
-        use_pretrained_model = input("use_pretrained_model? (y/n)").capitalize()
+        print("Using pretrained model is for feature visualization.")
+        print("Please check networks/MultiViewNetwork.py if you want to visualize features.")
+        use_pretrained_model = input("Use pretrained model? (y/n)").capitalize()
         if use_pretrained_model == "Y":
             break
         elif use_pretrained_model == "N":
@@ -47,14 +50,10 @@ def main(args, config):
             continue
 
     if use_pretrained_model == "Y":
-        model_epoch = 50
+        model_epoch = int(input("Enter the epoch number of the pretrained model: "))
         pretrain_model = os.path.join(model_prefix, "{}-checkpoint.pth".format(model_epoch))
         print("pretrain_model:", pretrain_model)
         model.load_state_dict(torch.load(pretrain_model, map_location="cpu")["model_state_dict"])
-
-    # print total trainable parameters
-    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Total trainable parameters: {total_params}")
 
     (
         xyzi,

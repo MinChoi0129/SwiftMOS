@@ -1,10 +1,19 @@
-import torch, argparse, random, sys, traceback, warnings, logging, tqdm, importlib, os
+import argparse
+import importlib
+import logging
+import os
+import random
+import sys
+import warnings
+
 import numpy as np
-from SwiftMOS_evaluate import val
-from networks import MainNetwork
-from utils.logger import config_logger
+import torch
+import tqdm
 from torch.utils.tensorboard import SummaryWriter
 
+from networks import MainNetwork
+from SwiftMOS_evaluate import val
+from utils.logger import config_logger
 from utils.train_utils import (
     get_dataloaders,
     get_networks_optimizer_scheduler,

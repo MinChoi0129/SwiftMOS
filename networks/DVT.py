@@ -1,8 +1,9 @@
 import math
+
 import torch
-import torch.nn.functional as F
 from torch import nn
-from torch_scatter import scatter, scatter_max
+from torch_scatter import scatter
+
 from config.config_MOS import get_config
 
 general_config, dataset_param_config, model_param_config, optimize_param_config = get_config()

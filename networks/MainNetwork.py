@@ -1,16 +1,17 @@
 import os
-from matplotlib import pyplot as plt
+
 import numpy as np
+import open3d as o3d
 import torch
 import torch.nn as nn
+import yaml
+from matplotlib import pyplot as plt
+
+import deep_point
 from networks import MultiViewNetwork, backbone
 from networks.backbone import CatFusion
-import deep_point
 from utils.criterion import CE_OHEM
 from utils.lovasz_losses import lovasz_softmax
-import open3d as o3d
-import yaml
-from utils.pretty_print import shprint
 
 
 def VoxelMaxPool(pcds_feat, pcds_ind, output_size, scale_rate):

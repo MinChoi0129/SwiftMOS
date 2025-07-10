@@ -1,15 +1,17 @@
+import argparse
+import importlib
 import os
+
 import numpy as np
 import torch
+import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
-import argparse
+import tqdm
 from torch.utils.data import DataLoader
+
 import datasets
 from networks import MainNetwork
 from utils.metric import MultiClassMetric
-import tqdm
-import importlib
-import torch.backends.cudnn as cudnn
 
 cudnn.benchmark = True
 cudnn.enabled = True

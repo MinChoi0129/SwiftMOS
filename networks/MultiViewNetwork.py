@@ -1,14 +1,15 @@
 import os
-import time
-from matplotlib import pyplot as plt
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from matplotlib import pyplot as plt
+
 import deep_point
-from utils.pretty_print import shprint
-from . import backbone
 from networks.DVT import converters
-import numpy as np
+
+from . import backbone
 
 
 def VoxelMaxPool(pcds_feat, pcds_ind, output_size, scale_rate):
@@ -239,7 +240,7 @@ class MultiViewNetwork(nn.Module):
             self.save_feature_as_img(des2_bev_z_in, "16-des2_bev_z_in")
             self.save_feature_as_img(sph2_bev_z_in, "17-sph2_bev_z_in")
             self.save_feature_as_img(des_out, "18-des_out")
-            raise Exception("stop")
+            raise Exception("ALL_FEATURES_SAVED.")
 
         """Backprojection"""
         _, des_grid_to_point = descartes_scale_rates[des_out.shape[2]]
