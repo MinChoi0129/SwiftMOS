@@ -266,3 +266,17 @@ static inline __device__ void atomMin(float *address, float val) {
 static inline __device__ void atomMin(double *address, double val) {
   AtomicMinDecimalImpl<double, sizeof(double)>()(address, val);
 }
+static inline __device__ void atomMin(at::Half *address, at::Half val) {
+  unsigned int * address_as_ui = (unsigned int *) ((char *)address - ((size_t)address & 2));
+  unsigned int old = *address_as_ui;
+  unsigned int assumed;
+
+  at::Half hsum;
+  do {
+    assumed = old;
+    hsum.x = (size_t)address & 2 ? (old >> 16) : (old & 0xffff);
+    hsum = THCNumerics<at::Half>::lt(hsum, val) ? hsum : val;
+    old = (size_t)address & 2 ? (old & 0xffff) | (hsum.x << 16) : (old & 0xffff0000) | hsum.x;
+    old = atomicCAS(address_as_ui, assumed, old);
+  } while (assumed != old);
+}

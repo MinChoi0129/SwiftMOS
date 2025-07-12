@@ -22,6 +22,16 @@ def VoxelMaxPool(pcds_feat, pcds_ind, output_size, scale_rate):
     return voxel_feat
 
 
+def VoxelMinPool(pcds_feat, pcds_ind, output_size, scale_rate):
+    voxel_feat = deep_point.VoxelMinPool(
+        pcds_feat=pcds_feat.contiguous(),
+        pcds_ind=pcds_ind.contiguous(),
+        output_size=output_size,
+        scale_rate=scale_rate,
+    ).to(pcds_feat.dtype)
+    return voxel_feat
+
+
 """
 VoxelMaxPool : 두번째 파라미터가 갖는 값 quan 기준 W/H * scale_rate = output_size.
 BilinearSample : 두번째 파라미터가 갖는 값 quan 기준 W/H가 첫번째 파라미터로 되기 위한 scale_rate.
@@ -131,7 +141,7 @@ class MultiViewNetwork(nn.Module):
     def sph_2_des_2d2d(self, rv_feat, sphere_coord_t_0):
         BS, C, Hr, Wr = rv_feat.shape
 
-        sph_range_in = VoxelMaxPool(
+        sph_range_in = VoxelMinPool(
             pcds_feat=sphere_coord_t_0[:, :, 2:3, :].permute(0, 2, 1, 3).contiguous(),  # (BS, 1, N, 1)
             pcds_ind=sphere_coord_t_0[:, :, :2, :],  # (BS, N, 2, 1)
             output_size=(Hr, Wr),
