@@ -4,7 +4,7 @@ def get_config():
         name = __name__.rsplit("/")[-1].rsplit(".")[-1]
         batch_size_per_gpu = 3
 
-        SeqDir = "/home/ssd_4tb/minjae/KITTI/dataset/sequences"
+        SeqDir = "/home/workspace/KITTI/dataset/sequences"
         category_list = ["static", "moving"]
 
         loss_mode = "ohem"
@@ -35,7 +35,7 @@ def get_config():
 
             class CopyPasteAug:
                 is_use = True
-                ObjBackDir = "/home/ssd_4tb/minjae/KITTI/object_bank_semkitti"
+                ObjBackDir = "/home/workspace/KITTI/object_bank_semkitti"
                 paste_max_obj_num = 20
 
             class AugParam:

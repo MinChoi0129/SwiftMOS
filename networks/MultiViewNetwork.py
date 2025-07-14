@@ -129,7 +129,7 @@ class MultiViewNetwork(nn.Module):
     def des_2_sph_2d2d(self, bev_feat, descartes_coord_t_0):
         BS, C, Hb, Wb = bev_feat.shape
 
-        bev_z_in = VoxelMaxPool(
+        bev_z_in = VoxelMinPool(
             pcds_feat=descartes_coord_t_0[:, :, 2:3, :].permute(0, 2, 1, 3).contiguous(),  # (BS, 1, N, 1)
             pcds_ind=descartes_coord_t_0[:, :, :2, :],  # (BS, N, 2, 1)
             output_size=(Hb, Wb),
@@ -141,7 +141,7 @@ class MultiViewNetwork(nn.Module):
     def sph_2_des_2d2d(self, rv_feat, sphere_coord_t_0):
         BS, C, Hr, Wr = rv_feat.shape
 
-        sph_range_in = VoxelMinPool(
+        sph_range_in = VoxelMaxPool(
             pcds_feat=sphere_coord_t_0[:, :, 2:3, :].permute(0, 2, 1, 3).contiguous(),  # (BS, 1, N, 1)
             pcds_ind=sphere_coord_t_0[:, :, :2, :],  # (BS, N, 2, 1)
             output_size=(Hr, Wr),

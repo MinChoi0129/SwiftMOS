@@ -121,9 +121,7 @@ class VoxelMinPoolFunction(Function):
         assert pcds_ind.size(2) == len(scale_rate)
 
         voxel_out_shape = [pcds_feat.size(0), pcds_feat.size(1)] + list(output_size)
-        voxel_out = torch.full(
-            voxel_out_shape, float("inf"), dtype=pcds_feat.dtype, device=pcds_feat.device
-        )  # 최소값 찾기를 위해 무한대로 초기화
+        voxel_out = torch.zeros(voxel_out_shape, dtype=pcds_feat.dtype, device=pcds_feat.device)
         voxel_min_idx = torch.full([pcds_ind.size(0), pcds_ind.size(1)], -1, dtype=torch.int64, device=pcds_feat.device)
 
         voxel_out_size_pt = torch.LongTensor(voxel_out_shape).to(pcds_feat.device)
