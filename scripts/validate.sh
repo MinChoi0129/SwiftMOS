@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ConfigPath=config/config_MOS.py
-CheckpointModelEpoch=50 # this number means the epoch of the trained model. Please check experiments/config_MOS/checkpoint.
+CheckpointModelEpoch=52 # this number means the epoch of the trained model. Please check experiments/config_MOS/checkpoint.
 EvalMode=val # val or test
 
 export CUDA_VISIBLE_DEVICES=0

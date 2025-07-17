@@ -157,7 +157,7 @@ class MultiViewNetwork(nn.Module):
         point = grid_to_point(des, des_coord_curr)
 
         return (
-            VoxelMaxPool(
+            VoxelMinPool(
                 pcds_feat=point,
                 pcds_ind=sph_coord_curr[:, :, :2],
                 output_size=(int(64 * scale_rate), int(2048 * scale_rate)),
@@ -246,11 +246,11 @@ class MultiViewNetwork(nn.Module):
             self.save_feature_as_img(l2_fused, "12-l2_fused")
             self.save_feature_as_img(des3, "13-des3")
             self.save_feature_as_img(des1_bev_z_in, "14-des1_bev_z_in")
-            self.save_feature_as_img(sph1_bev_z_in, "15-sph1_bev_z_in")
+            self.save_feature_as_img(sph1_bev_z_in, "15-sph1_range_r_in")
             self.save_feature_as_img(des2_bev_z_in, "16-des2_bev_z_in")
-            self.save_feature_as_img(sph2_bev_z_in, "17-sph2_bev_z_in")
+            self.save_feature_as_img(sph2_bev_z_in, "17-sph2_range_r_in")
             self.save_feature_as_img(des_out, "18-des_out")
-            raise Exception("ALL_FEATURES_SAVED.")
+            raise Exception("ALL_FEATURES_SAVED. Stopping...")
 
         """Backprojection"""
         _, des_grid_to_point = descartes_scale_rates[des_out.shape[2]]

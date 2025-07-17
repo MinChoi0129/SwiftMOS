@@ -134,6 +134,9 @@ def test(model, test_loader, save_path):
             if not os.path.exists(prediction_folder_path):
                 os.makedirs(prediction_folder_path)
 
+            if final_np_prediction.shape[0] == 0:
+                print(f"Warning: {seq_id} {frame_id} has no prediction")
+
             prediction_label_path = os.path.join(prediction_folder_path, frame_id + ".label")
             final_np_prediction.tofile(prediction_label_path)
 
@@ -150,7 +153,6 @@ def main(args, config):
 
     if args.eval_mode == "val":
         eval_dataset = datasets.data_MOS.DataloadVal(pDataset.Val)
-        print(len(eval_dataset))
         eval_loader = DataLoader(
             eval_dataset,
             batch_size=1,
