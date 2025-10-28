@@ -10,7 +10,7 @@ This repository offers official SwiftMOS codes.
 
 We recommend to use PyTorch-CUDA Docker image.
 ```bash
-$ docker pull pytorch/pytorch:2.7.0-cuda11.8-cudnn9-devel
+$ docker pull pytorch/pytorch:2.7.0-cuda12.8-cudnn9-devel
 
 $ export DISPLAY=***.***.***.***:0 (* : your IP address for visualization)
 $ xhost +
@@ -22,7 +22,7 @@ $ docker run -it \
     --name SwiftMOS \
     --ipc=host \
     --gpus all \
-    pytorch/pytorch:2.7.0-cuda11.8-cudnn9-devel \
+    pytorch/pytorch:2.7.0-cuda12.8-cudnn9-devel \
     /bin/bash
 
 $ conda init
