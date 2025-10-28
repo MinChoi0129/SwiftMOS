@@ -1,282 +1,135 @@
-#include <THC/THC.h>
-#include <TH/THHalf.h>
-#include <THC/THCNumerics.cuh>
+#pragma once
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <stdint.h>
 
 #define THREADS 1024
-#define BLOCKS(N) ((N + THREADS - 1) / THREADS)
+#define BLOCKS(N) ((int)(((N) + THREADS - 1) / THREADS))
 
-#define ATOMIC(NAME)                                                           \
-  template <typename scalar, size_t size> struct Atomic##NAME##IntegerImpl;    \
-                                                                               \
-  template <typename scalar> struct Atomic##NAME##IntegerImpl<scalar, 1> {     \
-    inline __device__ void operator()(scalar *address, scalar val) {           \
-      uint32_t *address_as_ui = (uint32_t *)(address - ((size_t)address & 3)); \
-      uint32_t old = *address_as_ui;                                           \
-      uint32_t shift = ((size_t)address & 3) * 8;                              \
-      uint32_t sum;                                                            \
-      uint32_t assumed;                                                        \
-                                                                               \
-      do {                                                                     \
-        assumed = old;                                                         \
-        sum = OP(val, scalar((old >> shift) & 0xff));                          \
-        old = (old & ~(0x000000ff << shift)) | (sum << shift);                 \
-        old = atomicCAS(address_as_ui, assumed, old);                          \
-      } while (assumed != old);                                                \
-    }                                                                          \
-  };                                                                           \
-                                                                               \
-  template <typename scalar> struct Atomic##NAME##IntegerImpl<scalar, 2> {     \
-    inline __device__ void operator()(scalar *address, scalar val) {           \
-      uint32_t *address_as_ui =                                                \
-          (uint32_t *)((char *)address - ((size_t)address & 2));               \
-      uint32_t old = *address_as_ui;                                           \
-      uint32_t sum;                                                            \
-      uint32_t newval;                                                         \
-      uint32_t assumed;                                                        \
-                                                                               \
-      do {                                                                     \
-        assumed = old;                                                         \
-        sum = OP(val, (size_t)address & 2 ? scalar(old >> 16)                  \
-                                          : scalar(old & 0xffff));             \
-        newval = (size_t)address & 2 ? (old & 0xffff) | (sum << 16)            \
-                                     : (old & 0xffff0000) | sum;               \
-        old = atomicCAS(address_as_ui, assumed, newval);                       \
-      } while (assumed != old);                                                \
-    }                                                                          \
-  };                                                                           \
-                                                                               \
-  template <typename scalar> struct Atomic##NAME##IntegerImpl<scalar, 4> {     \
-    inline __device__ void operator()(scalar *address, scalar val) {           \
-      uint32_t *address_as_ui = (uint32_t *)address;                           \
-      uint32_t old = *address_as_ui;                                           \
-      uint32_t assumed;                                                        \
-                                                                               \
-      do {                                                                     \
-        assumed = old;                                                         \
-        old = atomicCAS(address_as_ui, assumed, OP(val, (scalar)old));         \
-      } while (assumed != old);                                                \
-    }                                                                          \
-  };                                                                           \
-                                                                               \
-  template <typename scalar> struct Atomic##NAME##IntegerImpl<scalar, 8> {     \
-    inline __device__ void operator()(scalar *address, scalar val) {           \
-      unsigned long long *address_as_ull = (unsigned long long *)address;      \
-      unsigned long long old = *address_as_ull;                                \
-      unsigned long long assumed;                                              \
-                                                                               \
-      do {                                                                     \
-        assumed = old;                                                         \
-        old = atomicCAS(address_as_ull, assumed, OP(val, (scalar)old));        \
-      } while (assumed != old);                                                \
-    }                                                                          \
-  };                                                                           \
-                                                                               \
-  template <typename scalar, size_t size> struct Atomic##NAME##DecimalImpl;    \
-                                                                               \
-  template <typename scalar> struct Atomic##NAME##DecimalImpl<scalar, 4> {     \
-    inline __device__ void operator()(scalar *address, scalar val) {           \
-      int *address_as_i = (int *)address;                                      \
-      int old = *address_as_i;                                                 \
-      int assumed;                                                             \
-                                                                               \
-      do {                                                                     \
-        assumed = old;                                                         \
-        old = atomicCAS(address_as_i, assumed,                                 \
-                        __float_as_int(OP(val, __int_as_float(assumed))));     \
-      } while (assumed != old);                                                \
-    }                                                                          \
-  };                                                                           \
-                                                                               \
-  template <typename scalar> struct Atomic##NAME##DecimalImpl<scalar, 8> {     \
-    inline __device__ void operator()(scalar *address, scalar val) {           \
-      unsigned long long int *address_as_ull =                                 \
-          (unsigned long long int *)address;                                   \
-      unsigned long long int old = *address_as_ull;                            \
-      unsigned long long int assumed;                                          \
-                                                                               \
-      do {                                                                     \
-        assumed = old;                                                         \
-        old = atomicCAS(                                                       \
-            address_as_ull, assumed,                                           \
-            __double_as_longlong(OP(val, __longlong_as_double(assumed))));     \
-      } while (assumed != old);                                                \
-    }                                                                          \
-  };
+// ------------------------------
+// 64-bit CAS helpers (ULL 전용)
+// ------------------------------
+static inline __device__ unsigned long long cas_ull(unsigned long long* addr,
+                                                    unsigned long long cmp,
+                                                    unsigned long long val) {
+    return atomicCAS(addr, cmp, val);
+}
 
-#define OP(X, Y) Y + X
-ATOMIC(Add)
-#undef OP
-static inline __device__ void atomAdd(uint8_t *address, uint8_t val) {
-  AtomicAddIntegerImpl<uint8_t, sizeof(uint8_t)>()(address, val);
-}
-static inline __device__ void atomAdd(int8_t *address, int8_t val) {
-  AtomicAddIntegerImpl<int8_t, sizeof(int8_t)>()(address, val);
-}
-static inline __device__ void atomAdd(int16_t *address, int16_t val) {
-  AtomicAddIntegerImpl<int16_t, sizeof(int16_t)>()(address, val);
-}
-static inline __device__ void atomAdd(int32_t *address, int32_t val) {
-  atomicAdd(address, val);
-}
-static inline __device__ void atomAdd(int64_t *address, int64_t val) {
-  AtomicAddIntegerImpl<int64_t, sizeof(int64_t)>()(address, val);
-}
-static inline __device__ void atomAdd(float *address, float val) {
-  atomicAdd(address, val);
-}
-static inline  __device__ void atomAdd(at::Half *address, at::Half val) {
-  #if ((CUDA_VERSION < 10000) || (defined(__CUDA_ARCH__) && (__CUDA_ARCH__ < 700)))
-    unsigned int * address_as_ui =
-      (unsigned int *) ((char *)address - ((size_t)address & 2));
-    unsigned int old = *address_as_ui;
-    unsigned int assumed;
-
-    at::Half hsum;
+// ------------------------------
+// int64 원자 연산 (CAS 기반)
+// ------------------------------
+static inline __device__ int64_t atomicAdd_ll(int64_t* p, int64_t val) {
+    auto* a = reinterpret_cast<unsigned long long*>(p);
+    unsigned long long old = *a, assumed;
     do {
-      assumed = old;
-      hsum.x = (size_t)address & 2 ? (old >> 16) : (old & 0xffff);
-      hsum = THCNumerics<at::Half>::add(hsum, val);
-      old = (size_t)address & 2 ? (old & 0xffff) | (hsum.x << 16) : (old & 0xffff0000) | hsum.x;
-      old = atomicCAS(address_as_ui, assumed, old);
+        assumed = old;
+        int64_t cur = static_cast<int64_t>(assumed);
+        int64_t nxt = cur + val;
+        old = cas_ull(a, assumed, static_cast<unsigned long long>(nxt));
     } while (assumed != old);
-  #else
-    atomicAdd(reinterpret_cast<__half*>(address), val);
-  #endif
-}
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ < 600 || CUDA_VERSION < 8000)
-static inline __device__ void atomAdd(double *address, double val) {
-  AtomicAddDecimalImpl<double, sizeof(double)>()(address, val);
-}
-#else
-static inline __device__ void atomAdd(double *address, double val) {
-  atomicAdd(address, val);
-}
-#endif
-
-#define OP(X, Y) Y *X
-ATOMIC(Mul)
-#undef OP
-static inline __device__ void atomMul(uint8_t *address, uint8_t val) {
-  AtomicMulIntegerImpl<uint8_t, sizeof(uint8_t)>()(address, val);
-}
-static inline __device__ void atomMul(int8_t *address, int8_t val) {
-  AtomicMulIntegerImpl<int8_t, sizeof(int8_t)>()(address, val);
-}
-static inline __device__ void atomMul(int16_t *address, int16_t val) {
-  AtomicMulIntegerImpl<int16_t, sizeof(int16_t)>()(address, val);
-}
-static inline __device__ void atomMul(int32_t *address, int32_t val) {
-  AtomicMulIntegerImpl<int32_t, sizeof(int32_t)>()(address, val);
-}
-static inline __device__ void atomMul(int64_t *address, int64_t val) {
-  AtomicMulIntegerImpl<int64_t, sizeof(int64_t)>()(address, val);
-}
-static inline __device__ void atomMul(float *address, float val) {
-  AtomicMulDecimalImpl<float, sizeof(float)>()(address, val);
-}
-static inline __device__ void atomMul(double *address, double val) {
-  AtomicMulDecimalImpl<double, sizeof(double)>()(address, val);
+    return static_cast<int64_t>(old);
 }
 
-#define OP(X, Y) Y / X
-ATOMIC(Div)
-#undef OP
-static inline __device__ void atomDiv(uint8_t *address, uint8_t val) {
-  AtomicDivIntegerImpl<uint8_t, sizeof(uint8_t)>()(address, val);
-}
-static inline __device__ void atomDiv(int8_t *address, int8_t val) {
-  AtomicDivIntegerImpl<int8_t, sizeof(int8_t)>()(address, val);
-}
-static inline __device__ void atomDiv(int16_t *address, int16_t val) {
-  AtomicDivIntegerImpl<int16_t, sizeof(int16_t)>()(address, val);
-}
-static inline __device__ void atomDiv(int32_t *address, int32_t val) {
-  AtomicDivIntegerImpl<int32_t, sizeof(int32_t)>()(address, val);
-}
-static inline __device__ void atomDiv(int64_t *address, int64_t val) {
-  AtomicDivIntegerImpl<int64_t, sizeof(int64_t)>()(address, val);
-}
-static inline __device__ void atomDiv(float *address, float val) {
-  AtomicDivDecimalImpl<float, sizeof(float)>()(address, val);
-}
-static inline __device__ void atomDiv(double *address, double val) {
-  AtomicDivDecimalImpl<double, sizeof(double)>()(address, val);
+static inline __device__ int64_t atomicMax_ll(int64_t* p, int64_t val) {
+    auto* a = reinterpret_cast<unsigned long long*>(p);
+    unsigned long long old = *a, assumed;
+    do {
+        assumed = old;
+        int64_t cur = static_cast<int64_t>(assumed);
+        if (cur >= val) break;
+        old = cas_ull(a, assumed, static_cast<unsigned long long>(val));
+    } while (assumed != old);
+    return static_cast<int64_t>(old);
 }
 
-#define OP(X, Y) max(Y, X)
-ATOMIC(Max)
-#undef OP
-static inline __device__ void atomMax(uint8_t *address, uint8_t val) {
-  AtomicMaxIntegerImpl<uint8_t, sizeof(uint8_t)>()(address, val);
-}
-static inline __device__ void atomMax(int8_t *address, int8_t val) {
-  AtomicMaxIntegerImpl<int8_t, sizeof(int8_t)>()(address, val);
-}
-static inline __device__ void atomMax(int16_t *address, int16_t val) {
-  AtomicMaxIntegerImpl<int16_t, sizeof(int16_t)>()(address, val);
-}
-static inline __device__ void atomMax(int32_t *address, int32_t val) {
-  atomicMax(address, val);
-}
-static inline __device__ void atomMax(int64_t *address, int64_t val) {
-  AtomicMaxIntegerImpl<int64_t, sizeof(int64_t)>()(address, val);
-}
-static inline __device__ void atomMax(float *address, float val) {
-  AtomicMaxDecimalImpl<float, sizeof(float)>()(address, val);
-}
-static inline  __device__ void atomMax(at::Half *address, at::Half val) {
-  unsigned int * address_as_ui = (unsigned int *) ((char *)address - ((size_t)address & 2));
-  unsigned int old = *address_as_ui;
-  unsigned int assumed;
-
-  at::Half hsum;
-  do {
-    assumed = old;
-    hsum.x = (size_t)address & 2 ? (old >> 16) : (old & 0xffff);
-    hsum = THCNumerics<at::Half>::gt(hsum, val) ? hsum : val;
-    old = (size_t)address & 2 ? (old & 0xffff) | (hsum.x << 16) : (old & 0xffff0000) | hsum.x;
-    old = atomicCAS(address_as_ui, assumed, old);
-  } while (assumed != old);
-}
-static inline __device__ void atomMax(double *address, double val) {
-  AtomicMaxDecimalImpl<double, sizeof(double)>()(address, val);
+static inline __device__ int64_t atomicMin_ll(int64_t* p, int64_t val) {
+    auto* a = reinterpret_cast<unsigned long long*>(p);
+    unsigned long long old = *a, assumed;
+    do {
+        assumed = old;
+        int64_t cur = static_cast<int64_t>(assumed);
+        if (cur <= val) break;
+        old = cas_ull(a, assumed, static_cast<unsigned long long>(val));
+    } while (assumed != old);
+    return static_cast<int64_t>(old);
 }
 
-#define OP(X, Y) min(Y, X)
-ATOMIC(Min)
-#undef OP
-static inline __device__ void atomMin(uint8_t *address, uint8_t val) {
-  AtomicMinIntegerImpl<uint8_t, sizeof(uint8_t)>()(address, val);
+// ------------------------------
+// double 원자 연산 (CAS 기반)
+// ------------------------------
+static inline __device__ double atomicAdd_double(double* p, double val) {
+    auto* a = reinterpret_cast<unsigned long long*>(p);
+    unsigned long long old = *a, assumed;
+    do {
+        assumed = old;
+        double cur = __longlong_as_double(assumed);
+        double nxt = cur + val;
+        old = cas_ull(a, assumed, __double_as_longlong(nxt));
+    } while (assumed != old);
+    return __longlong_as_double(old);
 }
-static inline __device__ void atomMin(int8_t *address, int8_t val) {
-  AtomicMinIntegerImpl<int8_t, sizeof(int8_t)>()(address, val);
-}
-static inline __device__ void atomMin(int16_t *address, int16_t val) {
-  AtomicMinIntegerImpl<int16_t, sizeof(int16_t)>()(address, val);
-}
-static inline __device__ void atomMin(int32_t *address, int32_t val) {
-  atomicMin(address, val);
-}
-static inline __device__ void atomMin(int64_t *address, int64_t val) {
-  AtomicMinIntegerImpl<int64_t, sizeof(int64_t)>()(address, val);
-}
-static inline __device__ void atomMin(float *address, float val) {
-  AtomicMinDecimalImpl<float, sizeof(float)>()(address, val);
-}
-static inline __device__ void atomMin(double *address, double val) {
-  AtomicMinDecimalImpl<double, sizeof(double)>()(address, val);
-}
-static inline __device__ void atomMin(at::Half *address, at::Half val) {
-  unsigned int * address_as_ui = (unsigned int *) ((char *)address - ((size_t)address & 2));
-  unsigned int old = *address_as_ui;
-  unsigned int assumed;
 
-  at::Half hsum;
-  do {
-    assumed = old;
-    hsum.x = (size_t)address & 2 ? (old >> 16) : (old & 0xffff);
-    hsum = THCNumerics<at::Half>::lt(hsum, val) ? hsum : val;
-    old = (size_t)address & 2 ? (old & 0xffff) | (hsum.x << 16) : (old & 0xffff0000) | hsum.x;
-    old = atomicCAS(address_as_ui, assumed, old);
-  } while (assumed != old);
+static inline __device__ double atomicMax_double(double* p, double val) {
+    auto* a = reinterpret_cast<unsigned long long*>(p);
+    unsigned long long old = *a, assumed;
+    do {
+        assumed = old;
+        double cur = __longlong_as_double(assumed);
+        if (cur >= val) break;
+        old = cas_ull(a, assumed, __double_as_longlong(val));
+    } while (assumed != old);
+    return __longlong_as_double(old);
 }
+
+static inline __device__ double atomicMin_double(double* p, double val) {
+    auto* a = reinterpret_cast<unsigned long long*>(p);
+    unsigned long long old = *a, assumed;
+    do {
+        assumed = old;
+        double cur = __longlong_as_double(assumed);
+        if (cur <= val) break;
+        old = cas_ull(a, assumed, __double_as_longlong(val));
+    } while (assumed != old);
+    return __longlong_as_double(old);
+}
+
+// =====================================================
+// Unified atom* API (필요한 타입만 구현: int32/int64/float/double)
+// =====================================================
+
+// ---- Add ----
+static inline __device__ void atomAdd(int32_t* address, int32_t val) { atomicAdd(address, val); }
+static inline __device__ void atomAdd(int64_t* address, int64_t val) { (void)atomicAdd_ll(address, val); }
+static inline __device__ void atomAdd(float*   address, float   val) { atomicAdd(address, val); }
+static inline __device__ void atomAdd(double*  address, double  val) { (void)atomicAdd_double(address, val); }
+
+// ---- Max ----
+static inline __device__ void atomMax(int32_t* address, int32_t val) { atomicMax(address, val); }
+static inline __device__ void atomMax(int64_t* address, int64_t val) { (void)atomicMax_ll(address, val); }
+static inline __device__ void atomMax(float*   address, float   val) {
+    // float용 CAS max
+    int* addr = reinterpret_cast<int*>(address);
+    int old = *addr, assumed;
+    do {
+        assumed = old;
+        float cur = __int_as_float(assumed);
+        if (cur >= val) break;
+        old = atomicCAS(addr, assumed, __float_as_int(val));
+    } while (assumed != old);
+}
+static inline __device__ void atomMax(double*  address, double  val) { (void)atomicMax_double(address, val); }
+
+// ---- Min ----
+static inline __device__ void atomMin(int32_t* address, int32_t val) { atomicMin(address, val); }
+static inline __device__ void atomMin(int64_t* address, int64_t val) { (void)atomicMin_ll(address, val); }
+static inline __device__ void atomMin(float*   address, float   val) {
+    int* addr = reinterpret_cast<int*>(address);
+    int old = *addr, assumed;
+    do {
+        assumed = old;
+        float cur = __int_as_float(assumed);
+        if (cur <= val) break;
+        old = atomicCAS(addr, assumed, __float_as_int(val));
+    } while (assumed != old);
+}
+static inline __device__ void atomMin(double*  address, double  val) { (void)atomicMin_double(address, val); }
