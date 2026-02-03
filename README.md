@@ -2,7 +2,7 @@
 
 This repository offers official SwiftMOS codes.
 
-[<img src="https://img.shields.io/badge/PDF-Paper-red?style=flat&logo=arxiv&logoColor=white" width="90" height="20">](https://arxiv.org/)
+[![Paper](https://img.shields.io/badge/IEEE-Paper-00629B?style=flat&logo=ieee&logoColor=white)](https://ieeexplore.ieee.org/document/11358413)
 
 ![Overview of SwiftMOS Architecture](images/readme/swiftmos.png)
 
