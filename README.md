@@ -135,3 +135,18 @@ bash scripts/model_infer_speed.sh
 
 ### 6. Running on On-Board environment
 We provide a Dockerfile due to the complex installation process for the Nvidia AGX ORIN NX hardware. This Dockerfile primarily sets up the environment. You will still need to install SwiftMOS properly within this environment.
+
+### 7. Acknowledgments
+We would like to express our sincere gratitude to the authors of **[StreamMOS](https://github.com/NEU-REAL/StreamMOS)**. Our work is built upon their excellent research and codebase, which provided a solid foundation for the development of SwiftMOS.
+
+### 8. Citation
+If you find our work useful in your research, please consider citing our paper:
+
+```bibtex
+@article{lee2026swiftmos,
+  title={SwiftMOS: A Fast and Lightweight Moving Object Segmentation via Feature Flowing Direct View Transformation},
+  author={Lee, Minjae and Kim, Ungsik and Kim, Gun-Woo and Lee, Suwon},
+  journal={IEEE Robotics and Automation Letters},
+  year={2026},
+  publisher={IEEE}
+}
